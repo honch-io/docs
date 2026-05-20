@@ -9,7 +9,7 @@ export function SiteHeader() {
       <div className="container relative flex h-(--header-height) w-full items-center justify-between gap-2 px-4 sm:px-6">
         <div className="-mt-0.5 flex shrink-0 items-center gap-1.5">
           <Link aria-label="Home" href="/" className="font-heading text-3xl font-semibold">
-            honch<span className="text-muted-foreground">.</span>
+            honch<span className="text-muted-foreground"> docs</span>
           </Link>
         </div>
         <div className="ms-auto flex items-center gap-2">

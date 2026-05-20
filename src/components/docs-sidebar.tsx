@@ -12,31 +12,40 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import type { Root, Folder, Item, Node } from "fumadocs-core/page-tree";
+import type { Root, Node } from "fumadocs-core/page-tree";
 
-function RenderPages({
+function RenderNodes({
   items,
   pathname,
 }: {
   items: Node[];
   pathname: string;
 }) {
-  const pages = items.filter((item): item is Item => item.type === "page");
-  if (pages.length === 0) return null;
-
   return (
     <SidebarMenu className="gap-0.5">
-      {pages.map((page) => (
-        <SidebarMenuItem key={page.url}>
-          <SidebarMenuButton
-            className="ps-3.5 hover:bg-transparent active:bg-transparent"
-            isActive={page.url === pathname}
-            render={<Link href={page.url} />}
-          >
-            {page.name}
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      ))}
+      {items.map((item) => {
+        if (item.type === "page") {
+          return (
+            <SidebarMenuItem key={item.url}>
+              <SidebarMenuButton
+                className="ps-3.5 hover:bg-transparent active:bg-transparent"
+                isActive={item.url === pathname}
+                render={<Link href={item.url} />}
+              >
+                {item.name}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          );
+        }
+        if (item.type === "folder") {
+          return (
+            <SidebarMenuItem key={item.$id}>
+              <RenderNodes items={item.children} pathname={pathname} />
+            </SidebarMenuItem>
+          );
+        }
+        return null;
+      })}
     </SidebarMenu>
   );
 }
@@ -47,8 +56,24 @@ export function DocsSidebar({
 }: React.ComponentProps<typeof Sidebar> & { tree: Root }) {
   const pathname = usePathname();
 
-  // Check if tree has folders or is flat
-  const hasFolders = tree.children.some((item) => item.type === "folder");
+  // Group children by separator. Each separator starts a new section.
+  // Pages/folders before the first separator go into an untitled group.
+  const sections: { label: string | null; items: Node[] }[] = [];
+  let current: { label: string | null; items: Node[] } = { label: null, items: [] };
+
+  for (const item of tree.children) {
+    if (item.type === "separator") {
+      if (current.items.length > 0 || current.label) {
+        sections.push(current);
+      }
+      current = { label: item.name, items: [] };
+    } else {
+      current.items.push(item);
+    }
+  }
+  if (current.items.length > 0 || current.label) {
+    sections.push(current);
+  }
 
   return (
     <Sidebar
@@ -58,62 +83,18 @@ export function DocsSidebar({
     >
       <SidebarContent className="px-4 py-2">
         <div className="h-(--top-spacing) shrink-0" />
-        {hasFolders ? (
-          // Render folders with nested pages (COSS-style)
-          tree.children.map((item) => (
-            <SidebarGroup className="gap-1" key={item.$id}>
-              {item.type === "folder" && (
-                <>
-                  <SidebarGroupLabel className="h-7 px-0 text-sidebar-accent-foreground">
-                    {item.name}
-                  </SidebarGroupLabel>
-                  <SidebarGroupContent>
-                    <RenderPages items={item.children} pathname={pathname} />
-                  </SidebarGroupContent>
-                </>
-              )}
-              {item.type === "page" && (
-                <SidebarGroupContent>
-                  <SidebarMenu className="gap-0.5">
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        className="ps-3.5 hover:bg-transparent active:bg-transparent"
-                        isActive={item.url === pathname}
-                        render={<Link href={item.url} />}
-                      >
-                        {item.name}
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              )}
-            </SidebarGroup>
-          ))
-        ) : (
-          // Flat page list - all pages at root level
-          <SidebarGroup className="gap-1">
-            <SidebarGroupLabel className="h-7 px-0 text-sidebar-accent-foreground">
-              Documentation
-            </SidebarGroupLabel>
+        {sections.map((section, i) => (
+          <SidebarGroup className="gap-1" key={section.label ?? i}>
+            {section.label && (
+              <SidebarGroupLabel className="h-7 px-0 text-sidebar-accent-foreground">
+                {section.label}
+              </SidebarGroupLabel>
+            )}
             <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {tree.children.map((item) =>
-                  item.type === "page" ? (
-                    <SidebarMenuItem key={item.url}>
-                      <SidebarMenuButton
-                        className="ps-3.5 hover:bg-transparent active:bg-transparent"
-                        isActive={item.url === pathname}
-                        render={<Link href={item.url} />}
-                      >
-                        {item.name}
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ) : null,
-                )}
-              </SidebarMenu>
+              <RenderNodes items={section.items} pathname={pathname} />
             </SidebarGroupContent>
           </SidebarGroup>
-        )}
+        ))}
       </SidebarContent>
     </Sidebar>
   );

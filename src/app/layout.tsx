@@ -13,7 +13,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: {
     default: `${appName} Documentation`,
-    template: `%s - ${appName}`,
+    template: `${appName} - %s`,
   },
   description: `${appName} documentation and API reference.`,
 };
