@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import type { Metadata } from "next";
 import { RootProvider } from "fumadocs-ui/provider/next";
 import { SiteHeader } from "@/components/site-header";
+import { source } from "@/lib/source";
 import { appName } from "@/lib/shared";
 
 const inter = Inter({
@@ -41,7 +42,7 @@ export default function RootLayout({
               aria-hidden="true"
               className="container pointer-events-none fixed inset-0 z-45 before:absolute before:top-[calc(var(--header-height)-4.5px)] before:-left-[11.5px] before:z-1 before:-ml-1 before:size-2 before:rounded-[2px] before:border before:border-border before:bg-popover before:bg-clip-padding before:shadow-xs/5 after:absolute after:top-[calc(var(--header-height)-4.5px)] after:-right-[11.5px] after:z-1 after:-mr-1 after:size-2 after:rounded-[2px] after:border after:border-border after:bg-background after:bg-clip-padding after:shadow-xs/5 dark:after:bg-clip-border dark:before:bg-clip-border"
             />
-            <SiteHeader />
+            <SiteHeader tree={source.getPageTree()} />
             {children}
           </div>
         </RootProvider>
