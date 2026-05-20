@@ -29,20 +29,20 @@ git submodule add https://github.com/honch-io/honch.git components/honch
 
 ## 2. Initialize the SDK
 
-Two things must happen before `honch_init()`:
+Before `honch_init()`:
 
 1. **NVS (Non-Volatile Storage) must be initialized.** The SDK stores the device ID and user identity in NVS so they persist across reboots. Without this, `honch_init()` will fail with `HONCH_ERR_NVS`.
-2. **Wi-Fi should be connected.** The SDK sends events to the Honch platform over HTTPS. It will queue events locally if there's no connection yet, but you won't see data in your dashboard until the device has network access.
+2. **Wi-Fi should be set up.** The SDK sends events to the capture endpoint configured in `host`; use the HTTPS Honch endpoint in production. It can initialize before the device is connected and will queue events locally until Wi-Fi is available, but you won't see data in your dashboard until the device has network access.
 
 Here's a minimal `app_main()`:
 
 ```c
 #include "honch.h"
+#include "nvs_flash.h"
 
-// The event buffer is where the SDK stages events before sending them.
-// You own this memory. Declare it as a static array so it lives for the
-// duration of your program. 8192 bytes is the recommended minimum; increase
-// it if your application tracks events at a high rate.
+// The current config API requires a caller-owned event buffer. Declare it as
+// a static array so it lives for the duration of your program. 8192 bytes is
+// the recommended minimum.
 static uint8_t event_buffer[8192];
 
 void app_main(void)
@@ -50,7 +50,7 @@ void app_main(void)
     // 1. Initialize NVS (required for device ID persistence)
     nvs_flash_init();
 
-    // 2. Connect to Wi-Fi (required for sending events to Honch)
+    // 2. Connect to Wi-Fi (required before events can reach Honch)
     //    (your Wi-Fi init code here)
 
     // 3. Initialize Honch
@@ -59,7 +59,7 @@ void app_main(void)
         .host          = "https://capture.honch.io", // the Honch capture endpoint
         .device_model  = "my-device",            // identifies your hardware type in the dashboard
         .firmware_version = "1.0.0",             // tracked so you can monitor rollouts
-        .event_buffer  = event_buffer,           // staging area for queued events
+        .event_buffer  = event_buffer,           // required caller-owned buffer
         .event_buffer_size = sizeof(event_buffer),
     };
 
@@ -68,7 +68,7 @@ void app_main(void)
 ```
 
 On init, the SDK automatically:
-- **Generates a stable device ID** from the hardware MAC address and stores it in NVS. This means the same physical device always reports the same ID, even across reboots or reflashes.
+- **Loads or stores a stable device ID** derived from the hardware MAC address. The ID is stored in NVS and loaded on subsequent boots.
 - **Detects firmware version changes** by comparing the version you pass in config against the version stored from the last boot. If they differ, it emits a `$firmware_update` event so you can track rollout progress.
 - **Emits a `$device_boot` event** with the reset reason (power-on, crash, watchdog timeout, etc.) so you can monitor device health.
 - **Starts a background flush scheduler** that sends queued events to Honch every 60 seconds (configurable).

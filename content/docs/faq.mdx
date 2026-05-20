@@ -7,35 +7,38 @@ description: Frequently asked questions and troubleshooting for the Honch SDK.
 
 ### What is Honch?
 
-Honch is a product analytics platform for connected hardware. It captures device lifecycle events (boots, crashes, firmware updates, connectivity changes), custom telemetry (button presses, sensor readings, state changes), and hardware interactions (GPIO pin transitions), then surfaces them in a dashboard so you can understand how your devices behave in the real world.
+Honch is a product analytics platform for connected hardware. It captures device lifecycle events (boots, crashes, firmware updates, connectivity changes), custom telemetry (button presses, sensor readings, state changes), and configured hardware interactions (GPIO pin transitions), then surfaces them in a dashboard so you can understand how your devices behave in the real world.
 
 ### What platforms are supported?
 
-The ESP-IDF SDK (C) is currently available and supports ESP32, ESP32-S2, ESP32-S3, and ESP32-C3 devices. These are the most common Wi-Fi-capable microcontrollers used in IoT products. Additional platform SDKs are on the roadmap.
+The ESP-IDF SDK (C) is available and supports ESP32, ESP32-S2, ESP32-S3, and ESP32-C3 devices. The SDK repository also includes a C/POSIX foundation and an initial MicroPython implementation. Additional platform SDKs are on the roadmap.
 
 ### How much RAM does the SDK use?
 
 RAM usage has three main components:
 
-- **Event buffer**: you control this directly via `event_buffer_size` in your config. The SDK README recommends >= 8192 bytes. This is where events are staged as CBOR before being flushed. A larger buffer lets you queue more events between sends.
-- **Flush scheduler task**: a FreeRTOS task with an 8KB stack that runs in the background, waking periodically to send queued events over HTTPS.
+- **Event buffer**: you control this directly via `event_buffer_size` in your config. The current config API requires it, and the SDK README recommends >= 8192 bytes.
+- **RAM event queue**: by default, tracked events are queued in RAM first (`CONFIG_HONCH_RAM_QUEUE_DEPTH`, default 64) before spilling to NVS when the RAM queue is full.
+- **Flush scheduler task**: a FreeRTOS task with an 8KB stack that runs in the background, waking periodically to send queued events to the configured capture endpoint.
 - **GPIO tracking task**: a FreeRTOS task with a 4KB stack that processes GPIO interrupt events. This task is always created during `honch_init()`, even if you don't register any pins.
 
 Both tasks are created during `honch_init()` and destroyed during `honch_shutdown()`.
 
 ### Does the SDK work without Wi-Fi?
 
-Yes. Events are queued locally on-device regardless of connectivity. The SDK's background flush task checks for a valid IP address before attempting to send. When Wi-Fi reconnects and the device gets an IP, queued events are flushed automatically in batches. No events are lost during offline periods, up to the configured queue depth (`CONFIG_HONCH_MAX_QUEUE_DEPTH`, default 256 events). Beyond that limit, new `honch_track()` calls return `HONCH_ERR_QUEUE_FULL`.
+Yes. Events are queued locally on-device regardless of connectivity. The SDK's background flush task checks for a valid IP address before attempting to send. When Wi-Fi reconnects and the device gets an IP, queued events are flushed automatically in batches.
+
+By default, the queue is RAM-first: events stay in RAM until `CONFIG_HONCH_RAM_QUEUE_DEPTH` is reached, then spill to NVS. RAM-queued events do not survive a reboot or power loss. If you need every tracked event to be persisted immediately, enable `CONFIG_HONCH_DURABLE_IMMEDIATE_NVS`. The total queue is capped by `CONFIG_HONCH_MAX_QUEUE_DEPTH` (default 256 events); when it is full, the SDK drops the oldest queued events to make room for newer ones.
 
 ### What data format is used?
 
-Events are serialized as CBOR (Concise Binary Object Representation) and sent in batches over HTTPS. CBOR is a binary format that produces smaller payloads than JSON, which matters on constrained devices where bandwidth and memory are limited. You don't need to know anything about CBOR to use the SDK. You pass event properties as JSON strings and the SDK handles the encoding internally. For larger batches (>= 1024 bytes by default), the SDK also applies gzip compression before sending.
+Events are serialized as CBOR (Concise Binary Object Representation) and sent in batches to the configured capture endpoint. Use HTTPS in production. CBOR is a binary format that produces smaller payloads than JSON, which matters on constrained devices where bandwidth and memory are limited. You don't need to know anything about CBOR to use the SDK. You pass event properties as JSON strings and the SDK handles the encoding internally. On targets that support gzip, larger batches (>= 1024 bytes by default) can also be compressed before sending.
 
 ## Integration
 
 ### Do I need to call `nvs_flash_init()` before `honch_init()`?
 
-Yes. NVS (Non-Volatile Storage) is ESP-IDF's flash-backed key-value store. The Honch SDK uses it to persist the device ID and distinct ID across reboots. Without NVS, the device would get a new identity every time it restarts, making it impossible to track a device over time. If NVS isn't initialized, `honch_init()` fails with `HONCH_ERR_NVS`.
+Yes. NVS (Non-Volatile Storage) is ESP-IDF's flash-backed key-value store. The Honch SDK uses it to persist the device ID and distinct ID across reboots. If NVS isn't initialized, `honch_init()` fails with `HONCH_ERR_NVS`.
 
 ### Can I use the SDK without the ESP Component Manager?
 
@@ -77,7 +80,7 @@ This means the SDK is successfully tracking events locally but can't deliver the
 
 - **No IP address**: the SDK checks for a valid IP before each flush. Verify Wi-Fi is connected and the device got an address (`"Got IP"` in the logs).
 - **Wrong host URL**: make sure `host` in your config points to the correct capture endpoint (e.g. `"https://capture.honch.io"`). A typo or wrong protocol will cause connection failures.
-- **Server errors**: if the capture endpoint is returning 5xx errors, the SDK retries with exponential backoff (up to 5 minutes between attempts). Check the logs for transport error messages.
+- **Server errors or rate limiting**: if the capture endpoint is returning HTTP 429 or 5xx errors, the SDK retries with exponential backoff (up to 5 minutes between attempts). Check the logs for transport error messages.
 - **Enable verbose logging**: set `CONFIG_HONCH_LOG_VERBOSE` in menuconfig to see detailed output about flush timing, transport attempts, and response codes.
 
 ### NVS errors on init
@@ -90,13 +93,14 @@ This means the SDK couldn't read or write to the NVS flash partition:
   nvs_flash_erase();
   nvs_flash_init();
   ```
-  Note: erasing NVS clears the stored device ID, so the device will generate a new one on the next boot.
+  Note: erasing NVS clears the stored device ID. The SDK will restore the MAC-derived device ID on the next boot.
 
-### The event buffer is filling up
+### The event queue is filling up
 
-The event buffer is the staging area where CBOR-encoded events wait before being sent. If it fills up, `honch_track()` returns `HONCH_ERR_QUEUE_FULL`. Three ways to address this:
+The SDK keeps queued events in RAM first and spills to NVS after `CONFIG_HONCH_RAM_QUEUE_DEPTH`. If your device is producing events faster than it can send them, three settings help:
 
-- **Increase `event_buffer_size`**: the default recommendation is 8192 bytes, but if your application tracks events at a high rate, allocate more (the example project uses 16384).
+- **Increase `CONFIG_HONCH_RAM_QUEUE_DEPTH`**: keeps more events on the fast RAM path before NVS spill.
+- **Increase `CONFIG_HONCH_MAX_QUEUE_DEPTH`**: raises the total queue cap before the oldest events are dropped.
 - **Flush more aggressively**: lower `flush_interval_seconds` (default 60) or `flush_event_threshold` (default 30) so events are sent sooner.
 - **Trigger manual flushes**: call `honch_flush()` at key points (e.g., after a burst of events). This signals the background worker to send immediately rather than waiting for the next interval.
 
@@ -111,15 +115,15 @@ The event buffer is the staging area where CBOR-encoded events wait before being
 
 ### What data is sent to Honch?
 
-Every event includes auto-stamped properties that the SDK adds automatically: device ID (a hardware identifier derived from the MAC address), device model, firmware version, SDK platform and version, and environment tag. If configured, battery level and Wi-Fi RSSI (signal strength) are also included on each event. Beyond these, custom event properties contain only what you explicitly pass to `honch_track()`. The SDK never collects data you didn't ask for.
+Every event includes auto-stamped properties that the SDK adds automatically: device ID (a hardware identifier derived from the MAC address), device model, firmware version, SDK platform and version, and environment tag. If configured, battery level and Wi-Fi RSSI (signal strength) are also included on each event. Beyond these auto-stamped properties and lifecycle events, custom event properties contain only what you explicitly pass to `honch_track()`.
 
 ### Is the device ID personally identifiable?
 
-The device ID is derived from the chip's hardware MAC address and formatted as `dev_` followed by 12 hex characters (e.g. `dev_a3f2c1d4e5f6`). It identifies the physical device, not a person. If you need to associate a device with a specific user or account, call `honch_identify()` to set a distinct ID. This is persisted in NVS and sent with all subsequent events. To disassociate and start fresh, call `honch_reset()`. This regenerates the device ID and clears the stored identity.
+The device ID is derived from the chip's hardware MAC address and formatted as `dev_` followed by 12 hex characters (e.g. `dev_a3f2c1d4e5f6`). It identifies the physical device, not a person. If you need to associate a device with a specific user or account, call `honch_identify()` to set a distinct ID. This is persisted in NVS and sent with all subsequent events. To disassociate and start fresh, call `honch_reset()`. This restores the MAC-derived device ID, resets the distinct ID to match it, and clears queued events.
 
 ### Is data encrypted in transit?
 
-Yes. The SDK sends all data over HTTPS (TLS-encrypted). The capture endpoint URL in your config must use the `https://` scheme. All communication between the device and the Honch platform is encrypted.
+Use an HTTPS capture endpoint in production so SDK traffic is TLS-encrypted. The SDK sends to the endpoint URL in your config, so local development endpoints can use HTTP when you intentionally point the SDK at a local capture service.
 
 ## Still Have Questions?
 
