@@ -16,6 +16,9 @@ export const metadata: Metadata = {
     template: `${appName} - %s`,
   },
   description: `${appName} documentation and API reference.`,
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
