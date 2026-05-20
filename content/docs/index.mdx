@@ -5,7 +5,7 @@ description: Product analytics for connected hardware. Understand how your devic
 
 Honch is a product analytics platform built for connected hardware. It gives you visibility into how your devices behave in the field: boot cycles, firmware updates, connectivity, battery health, and any custom events you care about.
 
-The Honch SDK runs directly on your device as part of your firmware. It collects events locally and sends them to the Honch platform in efficient batches over HTTPS. Events are queued on-device, so nothing is lost when connectivity drops. They're sent once the network is available again.
+The Honch SDK runs directly on your device as part of your firmware. It collects events locally and sends them to the Honch platform in efficient batches over HTTPS. Events are queued on-device while connectivity is down, then sent once the network is available again.
 
 ## How Does It Work?
 

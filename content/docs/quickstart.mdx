@@ -39,10 +39,10 @@ Here's a minimal `app_main()`:
 ```c
 #include "honch.h"
 
-// The event buffer is where the SDK stages events before sending them.
+// The event buffer is where the SDK stages CBOR encoding before sending.
 // You own this memory. Declare it as a static array so it lives for the
 // duration of your program. 8192 bytes is the recommended minimum; increase
-// it if your application tracks events at a high rate.
+// it if your application sends larger events or batches.
 static uint8_t event_buffer[8192];
 
 void app_main(void)
@@ -59,7 +59,7 @@ void app_main(void)
         .host          = "https://capture.honch.io", // the Honch capture endpoint
         .device_model  = "my-device",            // identifies your hardware type in the dashboard
         .firmware_version = "1.0.0",             // tracked so you can monitor rollouts
-        .event_buffer  = event_buffer,           // staging area for queued events
+        .event_buffer  = event_buffer,           // staging area for CBOR encoding
         .event_buffer_size = sizeof(event_buffer),
     };
 
