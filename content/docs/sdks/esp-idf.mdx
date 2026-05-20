@@ -49,12 +49,12 @@ You configure the SDK by filling out a `honch_config_t` struct and passing it to
 | `device_model` | Yes | - | A string identifying your hardware type (e.g. `"smart-switch-v2"`). This lets you filter and compare behavior across different products in your dashboard. |
 | `firmware_version` | Yes | - | The current firmware version string (e.g. `"1.0.0"`). The SDK compares this against the version from the previous boot to detect firmware updates. |
 | `environment` | No | `"production"` | Tags events with an environment label (e.g. `"staging"`, `"development"`). Useful for separating test devices from production in the dashboard. |
-| `event_buffer` | Yes | - | A byte array you allocate for the SDK to use as a staging area while encoding events and batches. You own this memory, so declare it as a `static` or global array so it outlives `honch_init()`. |
-| `event_buffer_size` | Yes | - | The size of `event_buffer` in bytes. The SDK README recommends >= 8192. A larger buffer allows larger events or batches to be encoded before flushing. |
+| `event_buffer` | Yes | - | A caller-owned byte array required by the current config API. Keep it `static` or global so it outlives `honch_init()`. |
+| `event_buffer_size` | Yes | - | The size of `event_buffer` in bytes. The SDK README recommends >= 8192. |
 | `flush_interval_seconds` | No | 60 | The SDK runs a background task that wakes up on this interval and sends any queued events to Honch. Lower values mean data appears in your dashboard faster but cost more network traffic. |
 | `flush_event_threshold` | No | 30 | If the number of queued events reaches this count, the SDK signals the background flush task immediately rather than waiting for the next interval. This helps drain bursts of activity sooner. |
-| `battery_callback` | No | NULL | A function pointer the SDK calls to read the current battery level. It should return 0-100 (percentage) or -1 if unknown. When configured, the SDK stamps every event with `$battery_level` and emits `$battery_low` when the level drops below `battery_low_threshold`. |
-| `battery_low_threshold` | No | 15 | The battery percentage at which the SDK emits a `$battery_low` event. The event is emitted once when the level drops below this threshold, and not again until the level recovers above it. |
+| `battery_callback` | No | NULL | A function pointer the SDK calls to read the current battery level. It should return 0-100 (percentage) or -1 if unknown. When configured, the SDK stamps every event with `$battery_level` and emits `$battery_low` when the level is below `battery_low_threshold`. |
+| `battery_low_threshold` | No | 15 | The battery percentage below which the SDK emits a `$battery_low` event. The event is emitted once while below this threshold, and not again until the level recovers to the threshold or above. |
 
 ### Kconfig Options
 
@@ -66,15 +66,17 @@ These are compile-time settings you can change via `idf.py menuconfig`. They con
 | `CONFIG_HONCH_MAX_QUEUE_DEPTH` | 256 | The maximum number of events the SDK will hold across RAM and NVS. When the queue is full, the SDK drops the oldest queued events to make room for newer ones. |
 | `CONFIG_HONCH_RAM_QUEUE_DEPTH` | 64 | Number of events to keep in RAM before spilling to NVS. Increasing this improves the hot path for bursty online workloads at the cost of heap usage. |
 | `CONFIG_HONCH_DURABLE_IMMEDIATE_NVS` | off | Writes every tracked event to NVS immediately. Enable this when power-loss durability matters more than avoiding flash writes on the tracking hot path. |
-| `CONFIG_HONCH_ENABLE_GZIP` | on | When enabled, the SDK compresses CBOR batches with gzip before sending. This reduces bandwidth usage for larger payloads. If compression fails or doesn't reduce the payload size, the SDK falls back to sending raw CBOR. |
+| `CONFIG_HONCH_WIFI_RSSI_CACHE_MS` | 5000 | How long to cache Wi-Fi RSSI metadata while encoding events. Set to 0 to query RSSI for every event. |
+| `CONFIG_HONCH_ENABLE_GZIP` | on where available | When enabled, the SDK compresses CBOR batches with gzip before sending. This option is disabled on ESP32 and ESP32-S2 because those targets do not expose the required miniz compressor symbol. If compression fails or doesn't reduce the payload size, the SDK falls back to sending raw CBOR. |
 | `CONFIG_HONCH_GZIP_MIN_BYTES` | 1024 | The minimum CBOR payload size (in bytes) before gzip compression is attempted. Payloads below this size are sent uncompressed because the gzip overhead wouldn't save anything. |
 
 ## Initialization
 
-The SDK has two hard dependencies that must be set up before `honch_init()`:
+NVS must be set up before `honch_init()`:
 
-1. **NVS (Non-Volatile Storage)**: ESP-IDF's key-value store in flash memory. The SDK uses NVS to persist the device ID and distinct ID across reboots. Without NVS, the device would get a new ID every time it restarts, making it impossible to track a device over time.
-2. **Wi-Fi**: The SDK sends events over HTTPS. While `honch_init()` itself doesn't require an active connection (it will queue events), you need Wi-Fi connected for events to actually reach Honch. The SDK's background flush task checks for an IP address before attempting to send.
+1. **NVS (Non-Volatile Storage)**: ESP-IDF's key-value store in flash memory. The SDK uses NVS to persist the device ID and distinct ID across reboots. If NVS is not initialized, `honch_init()` fails with `HONCH_ERR_NVS`.
+
+Wi-Fi does not need to be connected before `honch_init()`. The SDK queues events locally while offline and flushes after it observes an IP address. To receive connectivity lifecycle events, initialize the ESP event loop and Wi-Fi before or around SDK startup.
 
 ```c
 #include "honch.h"
@@ -114,7 +116,7 @@ void app_main(void)
 
 On init, the SDK performs the following steps in order:
 
-1. **Generates a stable device ID**, derived from the chip's hardware MAC address and stored in NVS (format: `dev_` followed by 12 hex characters, e.g. `dev_a3f2c1d4e5f6`). On subsequent boots, the stored ID is loaded rather than regenerated, so the same physical device always has the same ID.
+1. **Loads or stores a stable device ID**, derived from the chip's hardware MAC address and stored in NVS (format: `dev_` followed by 12 hex characters, e.g. `dev_a3f2c1d4e5f6`). On subsequent boots, the stored ID is loaded rather than regenerated, so the same physical device has the same ID.
 2. **Initializes internal subsystems**: the RAM-first event queue with NVS spill, the HTTPS transport, the GPIO tracking worker task, and the lifecycle event manager.
 3. **Starts the background flush scheduler**, a FreeRTOS task (8KB stack) that wakes on the configured interval or when the event count crosses the flush threshold, then sends queued events to Honch in batches.
 4. **Checks for firmware version changes**. Compares the `firmware_version` in your config against the version stored from the previous boot. If they differ, the SDK emits a `$firmware_update` event with both the old and new version strings, then stores the new version.
@@ -127,13 +129,14 @@ On init, the SDK performs the following steps in order:
 ```c
 // Track a custom event. `properties_json` is a JSON-formatted string of
 // key-value pairs (e.g. "{\"count\": 1}"). Pass NULL if no extra properties
-// are needed. The SDK encodes this into CBOR internally and adds it to the
-// queue. If CONFIG_HONCH_MAX_QUEUE_DEPTH is reached, the SDK drops the oldest
-// queued events to make room for newer ones.
+// are needed. Invalid JSON or non-object JSON is ignored. The SDK encodes the
+// event into CBOR internally and adds it to the queue. If
+// CONFIG_HONCH_MAX_QUEUE_DEPTH is reached, the SDK drops the oldest queued
+// events to make room for newer ones.
 honch_err_t honch_track(const char *event, const char *properties_json);
 
 // Signal the background flush task to wake up and send queued events now,
-// rather than waiting for the next flush interval. This is asynchronous.
+// rather than waiting for the next flush interval. This is asynchronous:
 // the function returns immediately and flushing happens in the background.
 honch_err_t honch_flush(void);
 ```
@@ -161,9 +164,8 @@ honch_err_t honch_set_property(const char *key, const char *value_json);
 const char *honch_get_device_id(void);
 
 // Full identity reset. Emits a $device_reset event, erases the stored
-// device ID and distinct ID from NVS, regenerates a new device ID from the
-// MAC address, resets the distinct ID back to the new device ID, and clears
-// all queued events.
+// device ID and distinct ID from NVS, restores the MAC-derived device ID,
+// resets the distinct ID back to the device ID, and clears all queued events.
 honch_err_t honch_reset(void);
 ```
 
@@ -212,8 +214,8 @@ Up to 8 GPIO pins can be tracked simultaneously. If you register a pin that's al
 
 ```c
 // Graceful shutdown. Emits a $device_shutdown event, performs a synchronous
-// flush with a 5-second timeout (blocks until events are sent or the timeout
-// expires), then tears down all subsystems in reverse order: scheduler,
+// flush with a 5-second timeout (blocks until one flush attempt completes or
+// the timeout expires), then tears down all subsystems in reverse order: scheduler,
 // lifecycle, GPIO, transport, queue, identity.
 honch_err_t honch_shutdown(void);
 ```
@@ -244,10 +246,10 @@ These events are emitted automatically by the SDK. You don't need to track them 
 | `$device_shutdown` | Emitted at the start of `honch_shutdown()`, before the final flush. | - |
 | `$connectivity_change` | Emitted when Wi-Fi connects or disconnects. | `state`: `"connected"` or `"disconnected"`. |
 | `$firmware_update` | Emitted during init if the firmware version changed since the last boot. | `previous_version` and `new_version` strings. |
-| `$battery_low` | Emitted when battery drops below `battery_low_threshold`. Only fires once per threshold crossing. It is not repeated until the level recovers above the threshold and drops again. | `level`: the current battery percentage (int). |
+| `$battery_low` | Emitted when battery is below `battery_low_threshold` during event tracking. Only fires once while below the threshold, and is armed again after the level recovers to the threshold or above. | `level`: the current battery percentage (int). |
 | `$session_start` | Emitted when `honch_session_start()` is called. | `session_name`: the label passed to `session_start`, if any. |
 | `$session_end` | Emitted when `honch_session_end()` is called. | - |
-| `$device_reset` | Emitted when `honch_reset()` is called, before identity is cleared. | - |
+| `$device_reset` | Emitted when `honch_reset()` is called, before the queue is cleared and identity is restored to the MAC-derived device ID. | - |
 
 ## Error Codes
 
@@ -260,10 +262,10 @@ All SDK functions return `honch_err_t`. Here's what each value means and when yo
 | `HONCH_ERR_NOT_INITIALIZED` | You called an SDK function before `honch_init()`. |
 | `HONCH_ERR_ALREADY_INITIALIZED` | `honch_init()` was called a second time without calling `honch_shutdown()` first. |
 | `HONCH_ERR_NO_MEM` | A memory allocation failed. FreeRTOS couldn't create a task or queue. This usually means the system is low on heap. |
-| `HONCH_ERR_QUEUE_FULL` | The RAM queue reached `CONFIG_HONCH_RAM_QUEUE_DEPTH` while the SDK was preparing to spill to NVS. In normal operation the SDK spills to NVS or drops the oldest event when the total queue reaches `CONFIG_HONCH_MAX_QUEUE_DEPTH`. |
+| `HONCH_ERR_QUEUE_FULL` | The RAM queue reached `CONFIG_HONCH_RAM_QUEUE_DEPTH` before the SDK could spill to NVS. In normal operation the SDK spills to NVS, or drops the oldest event when the total queue reaches `CONFIG_HONCH_MAX_QUEUE_DEPTH`. |
 | `HONCH_ERR_NVS` | An NVS read or write failed. Most commonly caused by not calling `nvs_flash_init()` before `honch_init()`, or by a corrupted NVS partition. |
-| `HONCH_ERR_TRANSPORT` | The HTTPS transport layer encountered an error during setup (e.g. couldn't initialize the HTTP client). Runtime send failures are handled internally with retries. |
-| `HONCH_ERR_TIMEOUT` | An operation timed out. For example, the synchronous flush during `honch_shutdown()` didn't complete within its 5-second window. |
+| `HONCH_ERR_TRANSPORT` | Reserved for transport setup failures. Runtime send failures are handled internally with retries or drops, depending on the HTTP status. |
+| `HONCH_ERR_TIMEOUT` | Reserved for timeout failures. The internal synchronous flush used by `honch_shutdown()` can time out and log a warning, but `honch_shutdown()` still completes teardown. |
 | `HONCH_ERR_INTERNAL` | An unexpected error occurred inside the SDK (e.g. GPIO configuration failed). Check the `[honch]` log output for details. |
 
 ## Transport Details
@@ -272,9 +274,9 @@ The SDK serializes events as CBOR and sends them in batches to your configured h
 
 - **Local queuing**: Events are written to a RAM-first local queue, then spill to NVS after `CONFIG_HONCH_RAM_QUEUE_DEPTH`. RAM-queued events do not survive a reboot or power loss. Enable `CONFIG_HONCH_DURABLE_IMMEDIATE_NVS` to persist every tracked event immediately.
 - **Batching**: The background flush task drains the queue in batches of up to 50 events per HTTP request. If there are more than 50 events queued, it sends multiple requests.
-- **Compression**: When `CONFIG_HONCH_ENABLE_GZIP` is enabled (the default), CBOR payloads at or above `CONFIG_HONCH_GZIP_MIN_BYTES` (default 1024) are gzipped before sending. If gzip fails or doesn't reduce the payload size, raw CBOR is sent instead.
-- **Retry with backoff**: If the server returns a 5xx error or the connection fails, the SDK retains the events and retries with exponential backoff: starting at 1 second, doubling up to a maximum of 5 minutes, with +/-25% random jitter on each interval to prevent thundering herd problems when many devices reconnect simultaneously.
-- **Auth errors**: If the server returns HTTP 401 (invalid API key), the batch is dropped and not retried, since retrying with the same bad key would never succeed. Check the `[honch]` logs if events are disappearing.
+- **Compression**: When `CONFIG_HONCH_ENABLE_GZIP` is enabled (the default on targets that support the miniz compressor symbol), CBOR payloads at or above `CONFIG_HONCH_GZIP_MIN_BYTES` (default 1024) are gzipped before sending. If gzip fails or doesn't reduce the payload size, raw CBOR is sent instead.
+- **Retry with backoff**: If the server returns HTTP 429 or a 5xx error, or the connection fails, the SDK retains the events and retries with exponential backoff: starting at 1 second, doubling up to a maximum of 5 minutes, with +/-25% random jitter on each interval.
+- **Auth and rejected request errors**: If the server returns HTTP 401, or another non-429 4xx response, the batch is dropped and not retried. Check the `[honch]` logs if events are disappearing.
 
 ## Example Project
 
