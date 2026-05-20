@@ -8,9 +8,7 @@ fence delimiters, table separators, and navigation metadata are grouped as
 structure; every nonblank content line in `content/docs/` is covered by one of
 the ranges below.
 
-Status: passes 1 and 2 complete; pass 3 still pending. This audit is not final
-until the docs have been verified in three independent passes and all mismatches
-have been corrected.
+Status: passes 1, 2, and 3 complete for the current docs tree.
 
 ## Source Roots
 
@@ -26,16 +24,16 @@ have been corrected.
 | Path | Scope decision | Evidence |
 | --- | --- | --- |
 | `content/docs/**` | User-facing product docs. Every nonblank content line is mapped below. | `source.config.ts:6-17` configures `content/docs` as the docs source. |
-| `README.md` | Project scaffold README, not published product documentation. It is included here as repository documentation but is not part of the user-facing docs tree. | `README.md:1-45`; `source.config.ts:6-17` excludes it from the docs source. |
+| `README.md` | Repository documentation for the docs app. It is included in this audit, but it is not part of the published user-facing docs tree. | `README.md:1-25`; `source.config.ts:6-17` excludes it from the docs source. |
 | Generated/dependency files | `package-lock.json`, `tsconfig.json`, `biome.json`, and `components.json` are build/config metadata, not product docs. | Docs app configuration and package metadata. |
 
 ## `README.md`
 
 | Lines | Claim or role | Source evidence |
 | --- | --- | --- |
-| 1-16 | Fumadocs/Next.js scaffold README with development server commands and localhost URL. | `package.json:5-11` defines `dev`; `source.config.ts:6-17` and `src/lib/source.ts:7-10` show this is a Fumadocs-backed Next.js docs app. |
-| 18-35 | Scaffold route/source orientation. The listed paths are template-oriented; actual local paths use `src/lib/source.ts` and `src/app/docs`. | `src/lib/source.ts:1-36`; `src/app/docs`; `source.config.ts:6-17`. |
-| 37-45 | External learning links for Next.js and Fumadocs. | External scaffold references; no SDK behavior claim. |
+| 1-3 | README title and app description: Honch docs site, Next.js, Fumadocs MDX. | `package.json:20-24` lists Next/Fumadocs dependencies; `source.config.ts:6-17` configures Fumadocs docs; `src/app/layout.tsx` is the Next app root. |
+| 5-17 | Commands and current lint caveat. | `package.json:5-11` defines `dev`, `types:check`, and `lint`; verification log below records the current Biome/Tailwind/import-format lint diagnostics. |
+| 19-25 | Content/source/audit file locations. | `content/docs/`; `source.config.ts:6-17`; `src/lib/source.ts:7-10`; `DOCS_SOURCE_AUDIT.md`. |
 
 ## `content/docs/meta.json`
 
@@ -59,7 +57,7 @@ have been corrected.
 | 10-16 | How the SDK flow works: integrate, initialize, track, batch/flush, view data. | ESP-IDF public API/config: `../SDK/esp-idf/honch/include/honch.h:34-64`; init lifecycle: `../SDK/esp-idf/honch/src/honch.c:43-165`; tracking: `../SDK/esp-idf/honch/src/honch.c:199-269`; batch size and retry: `../SDK/esp-idf/honch/src/scheduler.c:20-23`, `../SDK/esp-idf/honch/src/scheduler.c:69-142`; capture/storage end-to-end tests: `../SDK/esp-idf/tests/test_cbor_migration.py:74-98`. |
 | 18-28 | Auto-collected properties and lifecycle events. | Encoder auto properties: `../SDK/esp-idf/honch/src/encoder.c:320-332`, `../SDK/esp-idf/honch/src/encoder.c:420-453`; lifecycle events: `../SDK/esp-idf/honch/src/lifecycle.c:41-66`, `../SDK/esp-idf/honch/src/lifecycle.c:111-170`; session APIs: `../SDK/esp-idf/honch/src/honch.c:318-383`. |
 | 30-36 | Supported platform table. | ESP-IDF component metadata: `../SDK/esp-idf/honch/idf_component.yml:1-11`; C/POSIX status: `../SDK/c-core/README.md:13-35`; MicroPython status: `../SDK/micropython/README.md:13-16`; future platform intent: `../SDK/c-core/README.md:5-11`. |
-| 38-44 | Navigation cards for quickstart, ESP-IDF guide, and FAQ. | Matching docs files exist: `content/docs/quickstart.mdx`, `content/docs/sdks/esp-idf.mdx`, `content/docs/faq.mdx`; nav metadata: `content/docs/meta.json:1-12`. |
+| 38-46 | Navigation cards for quickstart, ESP-IDF guide, and FAQ. | Matching docs files exist: `content/docs/quickstart.mdx`, `content/docs/sdks/esp-idf.mdx`, `content/docs/faq.mdx`; nav metadata: `content/docs/meta.json:1-12`. |
 
 ## `content/docs/quickstart.mdx`
 
@@ -69,13 +67,13 @@ have been corrected.
 | 6-12 | Quickstart scope and prerequisites: ESP-IDF >= 5.0, ESP32-family board, API key. | Component dependency on IDF >= 5.0: `../SDK/esp-idf/honch/idf_component.yml:5-11`; ESP-IDF API usage: `../SDK/esp-idf/honch/CMakeLists.txt:13-25`; target family documented by ESP-IDF SDK docs and Kconfig target condition: `../SDK/esp-idf/honch/Kconfig:52-61`; API key config: `../SDK/esp-idf/honch/include/honch.h:34-46`. |
 | 14-28 | Installation via ESP Component Manager or git submodule. | Component metadata name/version: `../SDK/esp-idf/honch/idf_component.yml:1-4`; ESP-IDF README installation examples: `../SDK/esp-idf/README.md:14-27`. |
 | 30-35 | Initialization requirements: NVS must be initialized; Wi-Fi should be set up but can connect later. | NVS open/fail in identity init: `../SDK/esp-idf/honch/src/identity.c:49-95`; `honch_init` calls identity first and returns errors: `../SDK/esp-idf/honch/src/honch.c:96-105`; scheduler skips flush until connected: `../SDK/esp-idf/honch/src/scheduler.c:58-67`; lifecycle sets connected after IP: `../SDK/esp-idf/honch/src/lifecycle.c:54-66`. |
-| 37-67 | Minimal `app_main` shape: include SDK/NVS headers, static buffer, NVS init, Wi-Fi setup placeholder, `honch_config_t`, `honch_init`. | Public config fields: `../SDK/esp-idf/honch/include/honch.h:34-46`; config validation: `../SDK/esp-idf/honch/src/honch.c:50-55`; example app NVS/Wi-Fi/config/init: `../SDK/esp-idf/example/main/app_main.c:119-147`. |
+| 37-68 | Minimal `app_main` shape: include SDK/NVS headers, static buffer, NVS init, Wi-Fi setup placeholder, `honch_config_t`, `honch_init`, and the surrounding code fence. | Public config fields: `../SDK/esp-idf/honch/include/honch.h:34-46`; config validation: `../SDK/esp-idf/honch/src/honch.c:50-55`; example app NVS/Wi-Fi/config/init: `../SDK/esp-idf/example/main/app_main.c:119-147`. |
 | 69-74 | Init side effects: identity, firmware check, boot event, scheduler. | Identity init: `../SDK/esp-idf/honch/src/identity.c:49-95`; init order: `../SDK/esp-idf/honch/src/honch.c:99-165`; firmware check: `../SDK/esp-idf/honch/src/lifecycle.c:129-150`; boot event: `../SDK/esp-idf/honch/src/lifecycle.c:111-121`; scheduler init: `../SDK/esp-idf/honch/src/scheduler.c:200-224`. |
-| 75-85 | Custom event tracking with JSON properties and auto-stamped metadata. | `honch_track`: `../SDK/esp-idf/honch/src/honch.c:199-269`; JSON parse behavior: `../SDK/esp-idf/honch/src/encoder.c:563-649`; auto properties: `../SDK/esp-idf/honch/src/encoder.c:320-332`, `../SDK/esp-idf/honch/src/encoder.c:420-453`. |
-| 87-98 | Session start/end behavior and `$session_id`. | Public API: `../SDK/esp-idf/honch/include/honch.h:55-56`; session implementation: `../SDK/esp-idf/honch/src/honch.c:318-383`; session ID generation/access: `../SDK/esp-idf/honch/src/identity.c:138-158`; encoding `$session_id`: `../SDK/esp-idf/honch/src/encoder.c:444-447`. |
-| 100-112 | GPIO tracking, edge modes, pull-up input, ISR deferral, 50ms debounce. | Public enum/API: `../SDK/esp-idf/honch/include/honch.h:28-32`, `../SDK/esp-idf/honch/include/honch.h:63`; GPIO implementation: `../SDK/esp-idf/honch/src/gpio.c:20-21`, `../SDK/esp-idf/honch/src/gpio.c:36-70`, `../SDK/esp-idf/honch/src/gpio.c:146-192`. |
-| 114-129 | Build/flash/monitor commands and expected log lines. | Example project instructions/source: `../SDK/esp-idf/README.md:120-139`; init log: `../SDK/esp-idf/honch/src/honch.c:157`; successful send log: `../SDK/esp-idf/honch/src/transport.c:177-179`; IP log: `../SDK/esp-idf/honch/src/lifecycle.c:62-65`. |
-| 131-135 | Next-step links. | Existing docs files and SDK repo paths: `content/docs/sdks/esp-idf.mdx`, `content/docs/faq.mdx`, `../SDK/esp-idf/example/`. |
+| 75-86 | Custom event tracking with JSON properties and auto-stamped metadata. | `honch_track`: `../SDK/esp-idf/honch/src/honch.c:199-269`; JSON parse behavior: `../SDK/esp-idf/honch/src/encoder.c:563-649`; auto properties: `../SDK/esp-idf/honch/src/encoder.c:320-332`, `../SDK/esp-idf/honch/src/encoder.c:420-453`. |
+| 87-99 | Session start/end behavior and `$session_id`. | Public API: `../SDK/esp-idf/honch/include/honch.h:55-56`; session implementation: `../SDK/esp-idf/honch/src/honch.c:318-383`; session ID generation/access: `../SDK/esp-idf/honch/src/identity.c:138-158`; encoding `$session_id`: `../SDK/esp-idf/honch/src/encoder.c:444-447`. |
+| 100-113 | GPIO tracking, edge modes, pull-up input, ISR deferral, 50ms debounce. | Public enum/API: `../SDK/esp-idf/honch/include/honch.h:28-32`, `../SDK/esp-idf/honch/include/honch.h:63`; GPIO implementation: `../SDK/esp-idf/honch/src/gpio.c:20-21`, `../SDK/esp-idf/honch/src/gpio.c:36-70`, `../SDK/esp-idf/honch/src/gpio.c:146-192`. |
+| 114-130 | Build/flash/monitor commands and expected log lines. | Example project instructions/source: `../SDK/esp-idf/README.md:120-139`; init log: `../SDK/esp-idf/honch/src/honch.c:157`; successful send log: `../SDK/esp-idf/honch/src/transport.c:177-179`; IP log: `../SDK/esp-idf/honch/src/lifecycle.c:62-65`. |
+| 131-136 | Next-step links. | Existing docs files and SDK repo paths: `content/docs/sdks/esp-idf.mdx`, `content/docs/faq.mdx`, `../SDK/esp-idf/example/`. |
 
 ## `content/docs/faq.mdx`
 
@@ -106,11 +104,11 @@ have been corrected.
 | 59-71 | Kconfig options and defaults. | `../SDK/esp-idf/honch/Kconfig:1-72`; queue usage: `../SDK/esp-idf/honch/src/queue.c:18-28`, `../SDK/esp-idf/honch/src/queue.c:309-360`; RSSI cache usage: `../SDK/esp-idf/honch/src/encoder.c:84-101`; gzip target constraints: `../SDK/esp-idf/honch/Kconfig:52-70`. |
 | 73-115 | Initialization code and sequence. | Example app: `../SDK/esp-idf/example/main/app_main.c:119-147`; init implementation: `../SDK/esp-idf/honch/src/honch.c:43-165`; NVS identity: `../SDK/esp-idf/honch/src/identity.c:49-95`; Wi-Fi lifecycle: `../SDK/esp-idf/honch/src/lifecycle.c:54-95`. |
 | 117-123 | Init side effects. | Identity: `../SDK/esp-idf/honch/src/identity.c:24-95`; queue/transport/GPIO/lifecycle/scheduler init order: `../SDK/esp-idf/honch/src/honch.c:99-165`; firmware/boot lifecycle: `../SDK/esp-idf/honch/src/lifecycle.c:111-150`. |
-| 125-141 | Event tracking and flush APIs. | Public API: `../SDK/esp-idf/honch/include/honch.h:51`, `../SDK/esp-idf/honch/include/honch.h:58`; `honch_track`: `../SDK/esp-idf/honch/src/honch.c:199-269`; JSON parse/ignore behavior: `../SDK/esp-idf/honch/src/encoder.c:584-596`; queue/drop: `../SDK/esp-idf/honch/src/queue.c:290-361`; `honch_flush`: `../SDK/esp-idf/honch/src/honch.c:385-393`. |
-| 144-169 | Identity APIs, persistence, reset behavior. | Public API: `../SDK/esp-idf/honch/include/honch.h:52-53`, `../SDK/esp-idf/honch/include/honch.h:59-61`; identity persistence: `../SDK/esp-idf/honch/src/identity.c:49-95`, `../SDK/esp-idf/honch/src/identity.c:114-135`; reset: `../SDK/esp-idf/honch/src/honch.c:395-414`, `../SDK/esp-idf/honch/src/identity.c:161-194`. |
-| 172-186 | Session APIs and behavior. | Public API: `../SDK/esp-idf/honch/include/honch.h:55-56`; session implementation: `../SDK/esp-idf/honch/src/honch.c:318-383`; session ID generation: `../SDK/esp-idf/honch/src/identity.c:32-47`, `../SDK/esp-idf/honch/src/identity.c:138-158`; encoding: `../SDK/esp-idf/honch/src/encoder.c:444-447`. |
+| 125-142 | Event tracking and flush APIs. | Public API: `../SDK/esp-idf/honch/include/honch.h:51`, `../SDK/esp-idf/honch/include/honch.h:58`; `honch_track`: `../SDK/esp-idf/honch/src/honch.c:199-269`; JSON parse/ignore behavior: `../SDK/esp-idf/honch/src/encoder.c:584-596`; queue/drop: `../SDK/esp-idf/honch/src/queue.c:290-361`; `honch_flush`: `../SDK/esp-idf/honch/src/honch.c:385-393`. |
+| 144-170 | Identity APIs, persistence, reset behavior. | Public API: `../SDK/esp-idf/honch/include/honch.h:52-53`, `../SDK/esp-idf/honch/include/honch.h:59-61`; identity persistence: `../SDK/esp-idf/honch/src/identity.c:49-95`, `../SDK/esp-idf/honch/src/identity.c:114-135`; reset: `../SDK/esp-idf/honch/src/honch.c:395-414`, `../SDK/esp-idf/honch/src/identity.c:161-194`. |
+| 172-187 | Session APIs and behavior. | Public API: `../SDK/esp-idf/honch/include/honch.h:55-56`; session implementation: `../SDK/esp-idf/honch/src/honch.c:318-383`; session ID generation: `../SDK/esp-idf/honch/src/identity.c:32-47`, `../SDK/esp-idf/honch/src/identity.c:138-158`; encoding: `../SDK/esp-idf/honch/src/encoder.c:444-447`. |
 | 189-211 | GPIO API, edge modes, ISR/worker/debounce behavior. | Public API/enum: `../SDK/esp-idf/honch/include/honch.h:28-32`, `../SDK/esp-idf/honch/include/honch.h:63`; implementation: `../SDK/esp-idf/honch/src/gpio.c:20-21`, `../SDK/esp-idf/honch/src/gpio.c:36-70`, `../SDK/esp-idf/honch/src/gpio.c:72-91`, `../SDK/esp-idf/honch/src/gpio.c:116-192`. |
-| 213-220 | Shutdown behavior. | Public API: `../SDK/esp-idf/honch/include/honch.h:49`; implementation: `../SDK/esp-idf/honch/src/honch.c:168-197`; sync flush internals: `../SDK/esp-idf/honch/src/scheduler.c:248-263`. |
+| 213-221 | Shutdown behavior. | Public API: `../SDK/esp-idf/honch/include/honch.h:49`; implementation: `../SDK/esp-idf/honch/src/honch.c:168-197`; sync flush internals: `../SDK/esp-idf/honch/src/scheduler.c:248-263`. |
 | 223-237 | Auto-stamped properties. | Reserved keys and property count: `../SDK/esp-idf/honch/src/encoder.c:320-376`; encoding values: `../SDK/esp-idf/honch/src/encoder.c:420-453`; runtime collection: `../SDK/esp-idf/honch/src/encoder.c:68-102`. |
 | 239-252 | Lifecycle events. | Connectivity: `../SDK/esp-idf/honch/src/lifecycle.c:41-66`; boot/shutdown: `../SDK/esp-idf/honch/src/lifecycle.c:111-127`; firmware: `../SDK/esp-idf/honch/src/lifecycle.c:129-150`; battery: `../SDK/esp-idf/honch/src/lifecycle.c:152-170`; sessions/reset: `../SDK/esp-idf/honch/src/honch.c:318-414`. |
 | 254-269 | Error codes. | Public enum: `../SDK/esp-idf/honch/include/honch.h:15-26`; `honch_get_device_id` return type exception: `../SDK/esp-idf/honch/include/honch.h:61`; return sites: `../SDK/esp-idf/honch/src/honch.c:43-55`, `../SDK/esp-idf/honch/src/identity.c:49-95`, `../SDK/esp-idf/honch/src/queue.c:127-185`, `../SDK/esp-idf/honch/src/gpio.c:166-188`, `../SDK/esp-idf/honch/src/scheduler.c:248-263`. |
@@ -148,3 +146,10 @@ configuration and import-format diagnostics outside the docs content files.
 | 2026-05-20 | 2 | `git diff --check` | Passed. |
 | 2026-05-20 | 2 | `npm run types:check` | Passed: Fumadocs generated files, Next route types generated, and `tsc --noEmit` completed. |
 | 2026-05-20 | 2 | `python3 -m unittest esp-idf/tests/test_cbor_migration.py` from `../SDK` | Passed: 12 tests. |
+| 2026-05-20 | 3 | Repository-docs sweep including `README.md`, `content/docs/**`, source config, and package scripts. | Replaced stale scaffold `README.md` with current docs-app commands and paths; audit now maps `README.md` lines 1-25. |
+| 2026-05-20 | 3 | Audit coverage check: parsed every `Lines` range in this file and compared it to every nonblank line in `README.md`, `content/docs/meta.json`, `content/docs/sdks/meta.json`, `content/docs/index.mdx`, `content/docs/quickstart.mdx`, `content/docs/faq.mdx`, and `content/docs/sdks/esp-idf.mdx`. | Passed: no missing or out-of-range line mappings. |
+| 2026-05-20 | 3 | `rg -n 'captures hardware interactions|over HTTPS|HTTPS transport|new device ID|regenerates|Failed sends|where individual events and batches are staged|used for queue|the device would get a new identity|all data over HTTPS|must use the https|All SDK functions return' content/docs` | No matches. |
+| 2026-05-20 | 3 | `git diff --check` | Passed. |
+| 2026-05-20 | 3 | `npm run types:check` | Passed: Fumadocs generated files, Next route types generated, and `tsc --noEmit` completed. |
+| 2026-05-20 | 3 | `python3 -m unittest esp-idf/tests/test_cbor_migration.py` from `../SDK` | Passed: 12 tests. |
+| 2026-05-20 | 3 | `npm run lint` | Failed on existing Biome/Tailwind/import-format diagnostics, including `biome.json` schema version mismatch, Tailwind-specific CSS parser settings, and formatting/import ordering outside the SDK docs content. No fixes applied in this audit pass. |
