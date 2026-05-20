@@ -8,7 +8,7 @@ fence delimiters, table separators, and navigation metadata are grouped as
 structure; every nonblank content line in `content/docs/` is covered by one of
 the ranges below.
 
-Status: pass 1 complete; passes 2 and 3 still pending. This audit is not final
+Status: passes 1 and 2 complete; pass 3 still pending. This audit is not final
 until the docs have been verified in three independent passes and all mismatches
 have been corrected.
 
@@ -82,7 +82,7 @@ have been corrected.
 | Lines | Claim or role | Source evidence |
 | --- | --- | --- |
 | 1-6 | Frontmatter and section heading. | Docs metadata only; loaded by `source.config.ts:6-17`. |
-| 8-14 | Product/platform overview and SDK availability. | ESP-IDF component metadata: `../SDK/esp-idf/honch/idf_component.yml:1-11`; C/POSIX status: `../SDK/c-core/README.md:13-35`; MicroPython status: `../SDK/micropython/README.md:13-16`. |
+| 8-14 | Product/platform overview and SDK availability. Configured GPIO interaction wording is backed by the explicit GPIO registration API. | ESP-IDF component metadata: `../SDK/esp-idf/honch/idf_component.yml:1-11`; GPIO registration API: `../SDK/esp-idf/honch/include/honch.h:63`, `../SDK/esp-idf/honch/src/gpio.c:116-192`; C/POSIX status: `../SDK/c-core/README.md:13-35`; MicroPython status: `../SDK/micropython/README.md:13-16`. |
 | 16-25 | RAM/task/resource components: event buffer API, RAM queue, scheduler task, GPIO task. | Config field: `../SDK/esp-idf/honch/include/honch.h:40-41`; RAM/NVS queue: `../SDK/esp-idf/honch/src/queue.c:24-41`, `../SDK/esp-idf/honch/src/queue.c:234-261`; scheduler task stack: `../SDK/esp-idf/honch/src/scheduler.c:214`; GPIO task stack and init: `../SDK/esp-idf/honch/src/gpio.c:72-91`. |
 | 27-35 | Offline operation, queue durability, CBOR, gzip. | Connected gate and flush: `../SDK/esp-idf/honch/src/scheduler.c:45-67`; queue push/spill/drop: `../SDK/esp-idf/honch/src/queue.c:290-361`; CBOR event/batch encoding: `../SDK/esp-idf/honch/src/encoder.c:482-518`, `../SDK/esp-idf/honch/src/encoder.c:651-740`; gzip transport: `../SDK/esp-idf/honch/src/transport.c:21-80`, `../SDK/esp-idf/honch/src/transport.c:117-129`; Kconfig gzip target constraints: `../SDK/esp-idf/honch/Kconfig:52-70`. |
 | 37-45 | Integration: NVS requirement and install options. | NVS identity init: `../SDK/esp-idf/honch/src/identity.c:49-95`; install metadata/README: `../SDK/esp-idf/honch/idf_component.yml:1-11`, `../SDK/esp-idf/README.md:14-27`. |
@@ -143,3 +143,8 @@ configuration and import-format diagnostics outside the docs content files.
 | 2026-05-20 | 1 | `npm run types:check` | Passed: Fumadocs generated files, Next route types generated, and `tsc --noEmit` completed. |
 | 2026-05-20 | 1 | `python3 -m unittest esp-idf/tests/test_cbor_migration.py` from `../SDK` | Passed: 12 tests. |
 | 2026-05-20 | 1 | `npm run lint` | Failed on pre-existing docs app diagnostics: Biome schema mismatch, Tailwind CSS parser configuration, import ordering, and formatting in files outside the edited docs content. No fixes applied in this pass. |
+| 2026-05-20 | 2 | Source-first API/behavior inventory from `../SDK/esp-idf/honch/include/honch.h`, `../SDK/esp-idf/honch/src/honch.c`, `../SDK/esp-idf/honch/src/encoder.c`, `../SDK/esp-idf/honch/src/queue.c`, `../SDK/esp-idf/honch/src/transport.c`, `../SDK/esp-idf/honch/src/lifecycle.c`, and `../SDK/esp-idf/honch/src/gpio.c`, then compared back to `content/docs/**`. | One wording mismatch found and corrected: FAQ now says configured GPIO interactions, matching the explicit `honch_track_gpio` registration API. |
+| 2026-05-20 | 2 | `rg -n 'captures hardware interactions|over HTTPS|HTTPS transport|new device ID|regenerates|Failed sends|where individual events and batches are staged|used for queue|the device would get a new identity|all data over HTTPS|must use the https|All SDK functions return' content/docs` | No matches. |
+| 2026-05-20 | 2 | `git diff --check` | Passed. |
+| 2026-05-20 | 2 | `npm run types:check` | Passed: Fumadocs generated files, Next route types generated, and `tsc --noEmit` completed. |
+| 2026-05-20 | 2 | `python3 -m unittest esp-idf/tests/test_cbor_migration.py` from `../SDK` | Passed: 12 tests. |
