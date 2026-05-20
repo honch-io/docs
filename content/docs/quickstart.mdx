@@ -1,0 +1,136 @@
+---
+title: Quickstart
+description: Get events flowing from your ESP32 device to Honch in minutes.
+---
+
+This guide walks you through integrating the Honch SDK into an ESP-IDF project and sending your first events.
+
+## Prerequisites
+
+- **ESP-IDF >= 5.0** installed and configured. This is Espressif's official development framework for ESP32 chips. If you don't have it yet, follow [Espressif's setup guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/).
+- **An ESP32 dev board** (any variant works: ESP32, ESP32-S2, ESP32-S3, or ESP32-C3).
+- **A Honch API key**, which authenticates your device with the Honch platform. Get one from your project settings at [honch.io](https://honch.io).
+
+## 1. Add the SDK to Your Project
+
+The SDK is an ESP-IDF component, a self-contained library that compiles alongside your application. You can add it in two ways.
+
+Using the ESP Component Manager (recommended, handles dependencies automatically):
+
+```bash
+idf.py add-dependency "honch-io/honch^0.1.0"
+```
+
+Or add as a git submodule (useful if you want to pin to a specific commit or inspect the source):
+
+```bash
+git submodule add https://github.com/honch-io/honch.git components/honch
+```
+
+## 2. Initialize the SDK
+
+Two things must happen before `honch_init()`:
+
+1. **NVS (Non-Volatile Storage) must be initialized.** The SDK stores the device ID and user identity in NVS so they persist across reboots. Without this, `honch_init()` will fail with `HONCH_ERR_NVS`.
+2. **Wi-Fi should be connected.** The SDK sends events to the Honch platform over HTTPS. It will queue events locally if there's no connection yet, but you won't see data in your dashboard until the device has network access.
+
+Here's a minimal `app_main()`:
+
+```c
+#include "honch.h"
+
+// The event buffer is where the SDK stages events before sending them.
+// You own this memory. Declare it as a static array so it lives for the
+// duration of your program. 8192 bytes is the recommended minimum; increase
+// it if your application tracks events at a high rate.
+static uint8_t event_buffer[8192];
+
+void app_main(void)
+{
+    // 1. Initialize NVS (required for device ID persistence)
+    nvs_flash_init();
+
+    // 2. Connect to Wi-Fi (required for sending events to Honch)
+    //    (your Wi-Fi init code here)
+
+    // 3. Initialize Honch
+    honch_config_t config = {
+        .api_key       = "your-api-key",        // authenticates this device with Honch
+        .host          = "https://capture.honch.io", // the Honch capture endpoint
+        .device_model  = "my-device",            // identifies your hardware type in the dashboard
+        .firmware_version = "1.0.0",             // tracked so you can monitor rollouts
+        .event_buffer  = event_buffer,           // staging area for queued events
+        .event_buffer_size = sizeof(event_buffer),
+    };
+
+    honch_init(&config);
+}
+```
+
+On init, the SDK automatically:
+- **Generates a stable device ID** from the hardware MAC address and stores it in NVS. This means the same physical device always reports the same ID, even across reboots or reflashes.
+- **Detects firmware version changes** by comparing the version you pass in config against the version stored from the last boot. If they differ, it emits a `$firmware_update` event so you can track rollout progress.
+- **Emits a `$device_boot` event** with the reset reason (power-on, crash, watchdog timeout, etc.) so you can monitor device health.
+- **Starts a background flush scheduler** that sends queued events to Honch every 60 seconds (configurable).
+
+## 3. Track Custom Events
+
+Once initialized, call `honch_track()` anywhere in your application to record events:
+
+```c
+honch_track("button_pressed", "{\"count\": 1}");
+```
+
+The first argument is the event name. This is how you'll find it in the dashboard. The second argument is a JSON string containing any properties you want to attach. Pass `NULL` if you don't need extra properties.
+
+You don't need to include device info in your properties. The SDK automatically stamps every event with the device ID, firmware version, SDK platform, and other context. See [Auto-Stamped Properties](/docs/sdks/esp-idf#auto-stamped-properties) for the full list.
+
+## 4. Use Sessions
+
+Sessions let you group a sequence of related events under a shared ID. This is useful for tracking user flows, operational modes, or any bounded activity on your device.
+
+```c
+honch_session_start("onboarding");
+honch_track("step_completed", "{\"step\": 1}");
+honch_track("step_completed", "{\"step\": 2}");
+honch_session_end();
+```
+
+Every event tracked between `honch_session_start()` and `honch_session_end()` automatically includes a `$session_id` property. The session name (e.g. `"onboarding"`) is attached to the `$session_start` event so you can filter sessions by type. If a session is already active when you call `honch_session_start()`, the SDK ends the previous session first.
+
+## 5. Track GPIO Pins
+
+The SDK can monitor hardware input pins and emit events automatically when their state changes. This is useful for buttons, switches, reed sensors, or any digital input.
+
+```c
+honch_track_gpio(GPIO_NUM_0, "boot_button", HONCH_GPIO_FALLING_EDGE);
+```
+
+- `GPIO_NUM_0`: the pin number. On most ESP32 dev boards, GPIO 0 is connected to the BOOT button.
+- `"boot_button"`: the event name that will appear in the dashboard each time this pin triggers.
+- `HONCH_GPIO_FALLING_EDGE`: trigger when the signal goes from high to low (i.e., when the button is pressed and pulls the pin to ground). Use `HONCH_GPIO_RISING_EDGE` for low-to-high, or `HONCH_GPIO_BOTH_EDGES` for any transition.
+
+The SDK configures the pin as an input with an internal pull-up resistor, registers an interrupt handler, and applies 50ms debouncing to filter out electrical noise from mechanical switches. You don't need to write any ISR code. The SDK handles it internally and defers the actual event tracking to a background task where it's safe to call `honch_track()`.
+
+## 6. Build, Flash, and Monitor
+
+Tell ESP-IDF which chip you're targeting, then build and flash:
+
+```bash
+idf.py set-target esp32s3   # match your board: esp32, esp32s2, esp32s3, esp32c3
+idf.py flash monitor
+```
+
+`idf.py set-target` configures the build for your specific chip variant. This matters because the chips have different peripherals and memory layouts. `flash` writes the firmware to the board, and `monitor` opens a serial console so you can see log output in real time.
+
+Look for `[honch]` log lines in the serial output. You should see:
+- `"Initialized (device_id: dev_...)"`: the SDK started successfully
+- `"Batch sent successfully"`: events are reaching Honch
+
+If you see events queuing but not sending, check that Wi-Fi is connected (look for `"Got IP"` in the logs).
+
+## Next Steps
+
+- [ESP-IDF Integration Guide](/docs/sdks/esp-idf): full configuration reference, lifecycle events, and advanced usage
+- [FAQ](/docs/faq): troubleshooting common issues
+- [Examples on GitHub](https://github.com/honch-io/sdk): complete working projects

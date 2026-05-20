@@ -1,0 +1,126 @@
+---
+title: FAQ
+description: Frequently asked questions and troubleshooting for the Honch SDK.
+---
+
+## General
+
+### What is Honch?
+
+Honch is a product analytics platform for connected hardware. It captures device lifecycle events (boots, crashes, firmware updates, connectivity changes), custom telemetry (button presses, sensor readings, state changes), and hardware interactions (GPIO pin transitions), then surfaces them in a dashboard so you can understand how your devices behave in the real world.
+
+### What platforms are supported?
+
+The ESP-IDF SDK (C) is currently available and supports ESP32, ESP32-S2, ESP32-S3, and ESP32-C3 devices. These are the most common Wi-Fi-capable microcontrollers used in IoT products. Additional platform SDKs are on the roadmap.
+
+### How much RAM does the SDK use?
+
+RAM usage has three main components:
+
+- **Event buffer**: you control this directly via `event_buffer_size` in your config. The SDK README recommends >= 8192 bytes. This is where events are staged as CBOR before being flushed. A larger buffer lets you queue more events between sends.
+- **Flush scheduler task**: a FreeRTOS task with an 8KB stack that runs in the background, waking periodically to send queued events over HTTPS.
+- **GPIO tracking task**: a FreeRTOS task with a 4KB stack that processes GPIO interrupt events. This task is always created during `honch_init()`, even if you don't register any pins.
+
+Both tasks are created during `honch_init()` and destroyed during `honch_shutdown()`.
+
+### Does the SDK work without Wi-Fi?
+
+Yes. Events are queued locally on-device regardless of connectivity. The SDK's background flush task checks for a valid IP address before attempting to send. When Wi-Fi reconnects and the device gets an IP, queued events are flushed automatically in batches. No events are lost during offline periods, up to the configured queue depth (`CONFIG_HONCH_MAX_QUEUE_DEPTH`, default 256 events). Beyond that limit, new `honch_track()` calls return `HONCH_ERR_QUEUE_FULL`.
+
+### What data format is used?
+
+Events are serialized as CBOR (Concise Binary Object Representation) and sent in batches over HTTPS. CBOR is a binary format that produces smaller payloads than JSON, which matters on constrained devices where bandwidth and memory are limited. You don't need to know anything about CBOR to use the SDK. You pass event properties as JSON strings and the SDK handles the encoding internally. For larger batches (>= 1024 bytes by default), the SDK also applies gzip compression before sending.
+
+## Integration
+
+### Do I need to call `nvs_flash_init()` before `honch_init()`?
+
+Yes. NVS (Non-Volatile Storage) is ESP-IDF's flash-backed key-value store. The Honch SDK uses it to persist the device ID and distinct ID across reboots. Without NVS, the device would get a new identity every time it restarts, making it impossible to track a device over time. If NVS isn't initialized, `honch_init()` fails with `HONCH_ERR_NVS`.
+
+### Can I use the SDK without the ESP Component Manager?
+
+Yes. The ESP Component Manager is convenient because it resolves dependencies automatically, but it's not required. You can add the SDK as a git submodule or copy the `honch/` directory directly into your project's `components/` folder. ESP-IDF automatically discovers components in that directory. See the [ESP-IDF Integration Guide](/docs/sdks/esp-idf#installation) for all three options.
+
+### How do I set my API key?
+
+Two approaches:
+
+1. **Hardcode in your config struct**: pass the key string directly in `honch_config_t.api_key`. Simple, but means the key is visible in your source code.
+2. **Use Kconfig**: set it via `idf.py menuconfig` so the key is defined as a build-time constant (`CONFIG_HONCH_API_KEY`). This is what the example project does. The key ends up in your `sdkconfig` file (which you should add to `.gitignore`) rather than in source code.
+
+### How many GPIO pins can I track?
+
+Up to 8 pins can be tracked simultaneously. Each registered pin is configured as an input with an internal pull-up resistor and 50ms software debouncing to filter out electrical noise from mechanical switches. The limit of 8 is a fixed maximum in the SDK. If you need more, you'd need to handle additional pins with your own ISR code and call `honch_track()` from a task context.
+
+### Can I track events from an ISR?
+
+No. Do not call `honch_track()` from an interrupt service routine (ISR). ISRs run in a restricted context where you can't take mutexes, allocate memory, or do anything that might block, and `honch_track()` does all of those things. Use `honch_track_gpio()` instead. It registers an ISR that only pushes the pin number into a FreeRTOS queue (a safe ISR operation), then a background worker task picks it up and calls `honch_track()` from a normal task context.
+
+## Troubleshooting
+
+### Events are not appearing in the dashboard
+
+Work through these steps in order:
+
+1. **Check the serial output.** Run `idf.py monitor` and look for `[honch]` log lines. If you see `"Initialized (device_id: dev_...)"`, the SDK started successfully.
+2. **Look for successful sends.** You should see `"Batch sent successfully"` in the logs. If you don't, events are queuing locally but not being sent.
+3. **Verify your API key.** If you see HTTP 401 in the logs, the API key is invalid. The SDK drops batches on 401 rather than retrying, since the same bad key would never work.
+4. **Confirm Wi-Fi is connected.** Look for `"Got IP"` in the serial output. The SDK won't attempt to flush until the device has a valid IP address.
+
+### I'm seeing HTTP 401 errors
+
+HTTP 401 means the Honch capture endpoint rejected your API key as invalid. The SDK logs this error and drops the batch (retrying would be pointless with the same bad key). Double-check the key in your `honch_config_t` or Kconfig settings against your project settings at [honch.io](https://honch.io).
+
+### Events are queuing but never sending
+
+This means the SDK is successfully tracking events locally but can't deliver them:
+
+- **No IP address**: the SDK checks for a valid IP before each flush. Verify Wi-Fi is connected and the device got an address (`"Got IP"` in the logs).
+- **Wrong host URL**: make sure `host` in your config points to the correct capture endpoint (e.g. `"https://capture.honch.io"`). A typo or wrong protocol will cause connection failures.
+- **Server errors**: if the capture endpoint is returning 5xx errors, the SDK retries with exponential backoff (up to 5 minutes between attempts). Check the logs for transport error messages.
+- **Enable verbose logging**: set `CONFIG_HONCH_LOG_VERBOSE` in menuconfig to see detailed output about flush timing, transport attempts, and response codes.
+
+### NVS errors on init
+
+This means the SDK couldn't read or write to the NVS flash partition:
+
+- **NVS not initialized**: `nvs_flash_init()` must be called before `honch_init()`. This is the most common cause.
+- **Corrupted NVS partition**: can happen after a failed flash or power loss during a write. Erase and reinitialize:
+  ```c
+  nvs_flash_erase();
+  nvs_flash_init();
+  ```
+  Note: erasing NVS clears the stored device ID, so the device will generate a new one on the next boot.
+
+### The event buffer is filling up
+
+The event buffer is the staging area where CBOR-encoded events wait before being sent. If it fills up, `honch_track()` returns `HONCH_ERR_QUEUE_FULL`. Three ways to address this:
+
+- **Increase `event_buffer_size`**: the default recommendation is 8192 bytes, but if your application tracks events at a high rate, allocate more (the example project uses 16384).
+- **Flush more aggressively**: lower `flush_interval_seconds` (default 60) or `flush_event_threshold` (default 30) so events are sent sooner.
+- **Trigger manual flushes**: call `honch_flush()` at key points (e.g., after a burst of events). This signals the background worker to send immediately rather than waiting for the next interval.
+
+### GPIO events are not being tracked
+
+- **Wrong pin number**: the pin must match your board's schematic, not the physical pin on the chip package. On most ESP32 dev boards, `GPIO_NUM_0` is the BOOT button. Check your board's documentation.
+- **Wrong edge mode**: for a typical active-low button (pulled high, goes low when pressed), use `HONCH_GPIO_FALLING_EDGE`. If you're not sure, try `HONCH_GPIO_BOTH_EDGES` to catch transitions in either direction.
+- **Pin conflict**: if the pin is already configured by another peripheral (UART, SPI, I2C, etc.), the GPIO configuration may fail. Check the logs for `"Failed to configure GPIO"`.
+- **Check registration**: look for `"GPIO %d registered for event"` in the logs to confirm the SDK successfully set up the pin.
+
+## Data and Privacy
+
+### What data is sent to Honch?
+
+Every event includes auto-stamped properties that the SDK adds automatically: device ID (a hardware identifier derived from the MAC address), device model, firmware version, SDK platform and version, and environment tag. If configured, battery level and Wi-Fi RSSI (signal strength) are also included on each event. Beyond these, custom event properties contain only what you explicitly pass to `honch_track()`. The SDK never collects data you didn't ask for.
+
+### Is the device ID personally identifiable?
+
+The device ID is derived from the chip's hardware MAC address and formatted as `dev_` followed by 12 hex characters (e.g. `dev_a3f2c1d4e5f6`). It identifies the physical device, not a person. If you need to associate a device with a specific user or account, call `honch_identify()` to set a distinct ID. This is persisted in NVS and sent with all subsequent events. To disassociate and start fresh, call `honch_reset()`. This regenerates the device ID and clears the stored identity.
+
+### Is data encrypted in transit?
+
+Yes. The SDK sends all data over HTTPS (TLS-encrypted). The capture endpoint URL in your config must use the `https://` scheme. All communication between the device and the Honch platform is encrypted.
+
+## Still Have Questions?
+
+Check the [examples on GitHub](https://github.com/honch-io/sdk) for complete working projects, or reach out to the team at [honch.io](https://honch.io).
