@@ -136,8 +136,8 @@ On init, the SDK performs the following steps in order:
 honch_err_t honch_track(const char *event, const char *properties_json);
 
 // Signal the background flush task to wake up and send queued events now,
-// rather than waiting for the next flush interval. This is asynchronous:
-// the function returns immediately and flushing happens in the background.
+// rather than waiting for the next flush interval. This is asynchronous.
+// The function returns immediately and flushing happens in the background.
 honch_err_t honch_flush(void);
 ```
 

@@ -25,7 +25,7 @@ The SDK also emits lifecycle events without any extra code on your part:
 - **Firmware updates**. The SDK stores the firmware version between boots. When the version changes, it emits an event with both the old and new versions so you can track rollout progress across your fleet.
 - **Connectivity changes**, emitted when Wi-Fi connects or disconnects, so you can correlate network stability with device behavior.
 - **Battery low**, emitted when battery is below a configurable threshold (default 15%). Only fires once while below the threshold, not repeatedly, so it won't flood your data.
-- **Sessions**. You control these with the session APIs. All events between session start and end share a session ID, making it easy to analyze user flows or operational sequences.
+- **Sessions**. You control these by calling `honch_session_start()` and `honch_session_end()`. All events between those calls share a session ID, making it easy to analyze user flows or operational sequences.
 
 ## Supported Platforms
 
