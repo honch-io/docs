@@ -53,8 +53,8 @@ function RenderNodes({
 }
 
 function groupBySection(tree: Root) {
-  const sections: { label: string | null; items: Node[] }[] = [];
-  let current: { label: string | null; items: Node[] } = { label: null, items: [] };
+  const sections: { label: React.ReactNode; items: Node[] }[] = [];
+  let current: { label: React.ReactNode; items: Node[] } = { label: null, items: [] };
 
   for (const item of tree.children) {
     if (item.type === "separator") {
@@ -86,7 +86,7 @@ export function SidebarNav({
   return (
     <>
       {sections.map((section, i) => (
-        <SidebarGroup className="gap-1" key={section.label ?? i}>
+        <SidebarGroup className="gap-1" key={i}>
           {section.label && (
             <SidebarGroupLabel className="h-7 px-0 text-sidebar-accent-foreground">
               {section.label}
