@@ -5,14 +5,14 @@ description: Product analytics for connected hardware. Understand how your devic
 
 Honch is a product analytics platform built for connected hardware. It gives you visibility into how your devices behave in the field: boot cycles, firmware updates, connectivity, battery health, and any custom events you care about.
 
-The Honch SDK runs directly on your device as part of your firmware. It collects events locally and sends them to the Honch platform in efficient batches over HTTPS. Events are queued on-device while connectivity is down, then sent once the network is available again.
+The Honch SDK runs directly on your device as part of your firmware. It collects events locally and sends them to the configured Honch capture endpoint in efficient batches. Use the HTTPS Honch endpoint in production. Events are queued on-device while connectivity is down, then sent once the network is available again.
 
 ## How Does It Work?
 
 1. **Integrate the SDK** into your firmware project. The SDK ships as a platform-specific component (e.g., an ESP-IDF component for ESP32) that compiles alongside your application code. There are no external dependencies to install at runtime.
 2. **Initialize with your API key** and basic device info (model name, firmware version). The API key authenticates your device with Honch. The model name and firmware version let you filter and compare devices in the dashboard. Once initialized, the SDK begins collecting lifecycle events automatically, no extra code needed.
 3. **Track custom events** for anything specific to your product: button presses, sensor readings, user interactions, configuration changes. Each event has a name and optional key-value properties.
-4. **Events are batched and sent** to the Honch capture endpoint. The SDK encodes events as CBOR (a compact binary format) and sends them in batches of up to 50 over HTTPS. If the device is offline, events queue locally and are flushed when connectivity returns. Failed sends are retried automatically with exponential backoff.
+4. **Events are batched and sent** to the Honch capture endpoint. The SDK encodes events as CBOR (a compact binary format) and sends them in batches of up to 50 to the endpoint configured in `host`. If the device is offline, events queue locally and are flushed when connectivity returns. Retryable failures are retried automatically with exponential backoff.
 5. **View your data** in the Honch dashboard to understand device behavior, track firmware rollouts, identify crash patterns, and debug field issues.
 
 ## What Gets Collected Automatically?
@@ -24,14 +24,16 @@ The SDK also emits lifecycle events without any extra code on your part:
 - **Device boot**, logged on every initialization, with the reset reason (power-on, software reset, crash/panic, watchdog timeout, deep sleep wake, or brownout). This lets you monitor reboot frequency and identify crash-prone devices.
 - **Firmware updates**. The SDK stores the firmware version between boots. When the version changes, it emits an event with both the old and new versions so you can track rollout progress across your fleet.
 - **Connectivity changes**, emitted when Wi-Fi connects or disconnects, so you can correlate network stability with device behavior.
-- **Battery low**, emitted when battery drops below a configurable threshold (default 15%). Only fires once per crossing, not repeatedly, so it won't flood your data.
-- **Sessions**. You control these by calling `session_start()` and `session_end()`. All events between those calls share a session ID, making it easy to analyze user flows or operational sequences.
+- **Battery low**, emitted when battery is below a configurable threshold (default 15%). Only fires once while below the threshold, not repeatedly, so it won't flood your data.
+- **Sessions**. You control these with the session APIs. All events between session start and end share a session ID, making it easy to analyze user flows or operational sequences.
 
 ## Supported Platforms
 
 | Platform | Language | Status |
 |----------|----------|--------|
 | ESP-IDF  | C        | Available |
+| C/POSIX  | C        | Foundation available |
+| MicroPython | Python | Initial implementation available |
 
 Support for additional platforms is on the roadmap.
 

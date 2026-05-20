@@ -3,7 +3,7 @@ title: ESP-IDF Integration
 description: Full integration guide for the Honch SDK on ESP32 devices using ESP-IDF.
 ---
 
-The Honch ESP-IDF SDK is a C component for the [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/) framework. It compiles alongside your application, queues events locally, and sends them to the Honch platform in efficient batches over HTTPS.
+The Honch ESP-IDF SDK is a C component for the [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/) framework. It compiles alongside your application, queues events locally, and sends them to the configured Honch capture endpoint in efficient batches. Use the HTTPS Honch endpoint in production.
 
 Events are serialized as [CBOR](https://cbor.io/) (Concise Binary Object Representation) rather than JSON. CBOR produces smaller payloads than JSON, which matters on constrained devices where every byte of bandwidth and memory counts. You don't need to know anything about CBOR to use the SDK. It handles encoding internally. You pass event properties as JSON strings and the SDK converts them.
 
@@ -12,7 +12,7 @@ Events are serialized as [CBOR](https://cbor.io/) (Concise Binary Object Represe
 - **ESP-IDF >= 5.0**: the SDK uses ESP-IDF APIs for NVS, Wi-Fi, HTTP, and FreeRTOS. Earlier versions are not supported.
 - **An ESP32 dev board**: ESP32, ESP32-S2, ESP32-S3, or ESP32-C3. Any board with Wi-Fi works.
 - **A Honch API key**: authenticates your device with the platform. Get one from your project settings at [honch.io](https://honch.io).
-- **Wi-Fi connectivity**: the SDK sends events over HTTPS. It queues events locally when offline and flushes them once a network connection is available.
+- **Wi-Fi connectivity**: the SDK sends events to the configured capture endpoint. It queues events locally when offline and flushes them once a network connection is available.
 
 ## Installation
 
@@ -117,7 +117,7 @@ void app_main(void)
 On init, the SDK performs the following steps in order:
 
 1. **Loads or stores a stable device ID**, derived from the chip's hardware MAC address and stored in NVS (format: `dev_` followed by 12 hex characters, e.g. `dev_a3f2c1d4e5f6`). On subsequent boots, the stored ID is loaded rather than regenerated, so the same physical device has the same ID.
-2. **Initializes internal subsystems**: the RAM-first event queue with NVS spill, the HTTPS transport, the GPIO tracking worker task, and the lifecycle event manager.
+2. **Initializes internal subsystems**: the RAM-first event queue with NVS spill, the HTTP transport, the GPIO tracking worker task, and the lifecycle event manager.
 3. **Starts the background flush scheduler**, a FreeRTOS task (8KB stack) that wakes on the configured interval or when the event count crosses the flush threshold, then sends queued events to Honch in batches.
 4. **Checks for firmware version changes**. Compares the `firmware_version` in your config against the version stored from the previous boot. If they differ, the SDK emits a `$firmware_update` event with both the old and new version strings, then stores the new version.
 5. **Emits a `$device_boot` event** that includes the chip's reset reason (power-on, software reset, panic/crash, watchdog timeout, deep sleep wake, or brownout) so you can monitor device health.
@@ -253,7 +253,7 @@ These events are emitted automatically by the SDK. You don't need to track them 
 
 ## Error Codes
 
-All SDK functions return `honch_err_t`. Here's what each value means and when you might see it:
+Most SDK operations return `honch_err_t`. Here's what each value means and when you might see it:
 
 | Code | Meaning |
 |------|---------|
@@ -262,10 +262,10 @@ All SDK functions return `honch_err_t`. Here's what each value means and when yo
 | `HONCH_ERR_NOT_INITIALIZED` | You called an SDK function before `honch_init()`. |
 | `HONCH_ERR_ALREADY_INITIALIZED` | `honch_init()` was called a second time without calling `honch_shutdown()` first. |
 | `HONCH_ERR_NO_MEM` | A memory allocation failed. FreeRTOS couldn't create a task or queue. This usually means the system is low on heap. |
-| `HONCH_ERR_QUEUE_FULL` | The RAM queue reached `CONFIG_HONCH_RAM_QUEUE_DEPTH` before the SDK could spill to NVS. In normal operation the SDK spills to NVS, or drops the oldest event when the total queue reaches `CONFIG_HONCH_MAX_QUEUE_DEPTH`. |
+| `HONCH_ERR_QUEUE_FULL` | Internal signal used when the RAM queue reaches `CONFIG_HONCH_RAM_QUEUE_DEPTH`; the public tracking path normally spills to NVS or drops the oldest event when the total queue reaches `CONFIG_HONCH_MAX_QUEUE_DEPTH`. |
 | `HONCH_ERR_NVS` | An NVS read or write failed. Most commonly caused by not calling `nvs_flash_init()` before `honch_init()`, or by a corrupted NVS partition. |
-| `HONCH_ERR_TRANSPORT` | Reserved for transport setup failures. Runtime send failures are handled internally with retries or drops, depending on the HTTP status. |
-| `HONCH_ERR_TIMEOUT` | Reserved for timeout failures. The internal synchronous flush used by `honch_shutdown()` can time out and log a warning, but `honch_shutdown()` still completes teardown. |
+| `HONCH_ERR_TRANSPORT` | Defined in the public enum, but not currently returned by the ESP-IDF public API. Runtime send failures are handled internally with retries or drops, depending on the HTTP status. |
+| `HONCH_ERR_TIMEOUT` | Used internally by the synchronous flush path. The final flush in `honch_shutdown()` can time out and log a warning, but teardown still continues. |
 | `HONCH_ERR_INTERNAL` | An unexpected error occurred inside the SDK (e.g. GPIO configuration failed). Check the `[honch]` log output for details. |
 
 ## Transport Details
