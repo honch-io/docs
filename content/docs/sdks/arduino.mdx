@@ -1,24 +1,51 @@
 ---
 title: Arduino ESP32
-description: Use the in-progress Honch Arduino ESP32 wrapper around the shared C core.
+description: Configure, run, and verify the in-progress Honch Arduino ESP32 wrapper.
 ---
 
-The Arduino ESP32 SDK is a C++ wrapper around the shared C core. It targets ESP32 boards using the Arduino framework and exposes a singleton-style `Honch` API.
+The Arduino ESP32 SDK is a C++ wrapper around Shared Core. It targets ESP32 boards using the Arduino framework and exposes a singleton-style `Honch` API.
 
-Status: in progress, library version `0.1.0`. The milestone has host wrapper tests and example compile support, but it has not yet been fully signed off with end-to-end ESP32 hardware validation.
+Status: in progress, library version `0.1.0`.
 
-## Support
+## Before You Start
 
-| Area | Current support |
+You need:
+
+| Requirement | Notes |
 | --- | --- |
 | Board family | ESP32 Arduino only. |
-| Dependencies | ESP32 Arduino core, `WiFi`, `Preferences`, `HTTPClient`. |
-| Upload path | Compact chunk frames to `POST /capture`. |
-| Storage | ESP32 `Preferences` for state and queued events. |
-| TLS | Application-owned; `insecureSkipTlsVerify` exists for local testing only. |
-| Relay, OTA, non-ESP32 boards | Not included in this milestone. |
+| Arduino core | ESP32 Arduino core with `WiFi`, `Preferences`, and `HTTPClient`. |
+| Network | Wi-Fi connection before flush. |
+| Project key | Sent as `X-Honch-Project-Key`. |
+| Event buffer | Caller-owned RAM buffer. |
 
-## Configure
+Not included: relay, OTA, and non-ESP32 Arduino boards.
+
+## 1. Add The Library
+
+Include the library in an ESP32 Arduino project that can compile the SDK sources:
+
+```cpp
+#include <WiFi.h>
+#include <Honch.h>
+```
+
+Expected result: your sketch can reference `HonchConfig` and the singleton `Honch` object.
+
+## 2. Configure Wi-Fi First
+
+The Arduino wrapper does not own Wi-Fi setup. Connect before calling `Honch.flush()`:
+
+```cpp
+WiFi.begin("ssid", "password");
+while (WiFi.status() != WL_CONNECTED) {
+  delay(250);
+}
+```
+
+Expected result: `WiFi.status()` returns `WL_CONNECTED`.
+
+## 3. Configure Honch
 
 ```cpp
 struct HonchConfig {
@@ -35,9 +62,20 @@ struct HonchConfig {
 };
 ```
 
-`eventBufferSize` is passed to the core as `max_event_bytes`. The current Arduino storage path stores state and queue entries through `Preferences`; the public buffer remains part of the milestone API surface.
+Required fields:
 
-## Basic Use
+| Field | Example |
+| --- | --- |
+| `apiKey` | `project-key` |
+| `host` | `https://capture.honch.io` |
+| `deviceModel` | `esp32-devkit` |
+| `firmwareVersion` | `1.0.0` |
+| `eventBuffer` | Static byte buffer. |
+| `eventBufferSize` | Buffer size in bytes. |
+
+`eventBufferSize` is passed to the core as `max_event_bytes`. Queue state is stored through ESP32 `Preferences`.
+
+## 4. Send A First Event
 
 ```cpp
 #include <WiFi.h>
@@ -70,15 +108,19 @@ void setup() {
   config.insecureSkipTlsVerify = false;
 
   if (Honch.begin(config)) {
-    Honch.track("boot", "{}");
+    Honch.track("app_started", "{\"source\":\"arduino\"}");
     Honch.flush();
+  } else {
+    Serial.println(Honch.lastError());
   }
 }
 
 void loop() {}
 ```
 
-## Public API
+Expected result: `Honch.begin(config)` returns `true`, `app_started` is queued, and `Honch.flush()` attempts delivery to `<host>/capture`.
+
+## 5. Use The Public API
 
 ```cpp
 bool Honch.begin(const HonchConfig &config);
@@ -94,15 +136,27 @@ const char *Honch.deviceId();
 const char *Honch.lastError();
 ```
 
-The wrapper returns `bool` and stores the last shared-core status. Use `Honch.lastError()` to get the status string.
+The wrapper returns `bool` and stores the last SDK status. Call `Honch.lastError()` immediately after a failed call.
 
-## Behavior
+## 6. Add Identity And Sessions
+
+```cpp
+Honch.identify("account-123", "{\"plan\":\"beta\"}");
+
+Honch.sessionStart("recording");
+Honch.track("recording_started", "{\"mode\":\"hdr\"}");
+Honch.sessionEnd();
+```
+
+Expected result: identified events use the configured distinct ID, and session events add `$session_id`.
+
+## Runtime Behavior
 
 - SDK platform is `arduino-esp32`.
 - Device ID is derived from the ESP32 eFuse MAC as `esp32-<12 uppercase hex chars>` when running on Arduino, then passed to the core as configured identity.
 - Background flush is disabled in the current wrapper; call `Honch.flush()` explicitly.
-- The queue is capped at 256 entries in the Arduino `Preferences` adapter.
-- `Honch.track`, `Honch.identify`, and `Honch.setProperty` use JSON strings for properties and values.
+- Queue capacity is 256 entries in the Arduino `Preferences` adapter.
+- `Honch.track`, `Honch.identify`, and `Honch.setProperty` use JSON strings.
 - `Honch.shutdown()` queues `$device_shutdown`, attempts a final flush, and releases the core client.
 
 ## Transport
@@ -122,19 +176,19 @@ HTTPS uses `WiFiClientSecure`. Set `insecureSkipTlsVerify` only for local testin
 - `examples/HonchBasic/HonchBasic.ino` connects to Wi-Fi, initializes Honch, tracks `boot`, and flushes.
 - `examples/HonchOfflineQueue/HonchOfflineQueue.ino` queues before Wi-Fi, then connects and flushes.
 
-Compile examples with Arduino CLI:
+If you use Arduino CLI, you can compile the examples from the SDK repository:
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32 ports/arduino/examples/HonchBasic
 arduino-cli compile --fqbn esp32:esp32:esp32 ports/arduino/examples/HonchOfflineQueue
 ```
 
-## Verify
+## Troubleshooting
 
-From the SDK root:
-
-```bash
-ports/arduino/scripts/verify-arduino.sh
-```
-
-The script always runs the host wrapper test. If `arduino-cli` is installed, it also compiles the ESP32 examples; otherwise the compile checks are skipped.
+| Symptom | Check |
+| --- | --- |
+| `Honch.begin` returns `false` | Required config fields and event buffer. |
+| `Honch.flush` returns `false` | Wi-Fi, host, TLS, project key, or retryable response. |
+| No delivery after tracking | Background flush is disabled; call `Honch.flush()`. |
+| TLS fails locally | Use a proper HTTPS endpoint or intentionally set `insecureSkipTlsVerify` for local tests. |
+| Queue fills | Network or Capture response is retryable; reduce event volume or fix delivery. |

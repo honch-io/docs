@@ -1,29 +1,47 @@
 ---
 title: Quickstart
-description: Choose a Honch SDK and send your first hardware analytics event.
+description: Get from a fresh SDK checkout to a verified first Honch event.
 ---
 
-Pick the SDK that matches where your device can run code:
+This guide is the shortest useful path through the SDKs. Pick the runtime your device can support, send one event, then verify that the SDK queued or delivered it before you add product-specific tracking.
 
-| Target | Start with |
-| --- | --- |
-| ESP32 firmware built with ESP-IDF | [ESP-IDF SDK](/sdks/esp-idf) |
-| Embedded Linux, POSIX device process, or local C harness | [C/POSIX SDK](/sdks/c-posix) |
-| MicroPython firmware with custom user modules | [MicroPython SDK](/sdks/micropython) |
-| ESP32 Arduino sketches | [Arduino ESP32 SDK](/sdks/arduino) |
-| BLE/offline device forwarding through a companion app | [React Native Relay](/sdks/react-native-relay) |
+## 1. Choose The SDK
 
-## ESP-IDF
+| Target | Use | Start here |
+| --- | --- | --- |
+| ESP32 firmware built with ESP-IDF | ESP-IDF component | [ESP-IDF guide](/sdks/esp-idf) |
+| Embedded Linux, POSIX device process, or local C harness | C/POSIX SDK | [C/POSIX guide](/sdks/c-posix) |
+| MicroPython firmware with custom user modules | MicroPython SDK plus `_honch_core` | [MicroPython guide](/sdks/micropython) |
+| ESP32 Arduino sketches | Arduino ESP32 library | [Arduino guide](/sdks/arduino) |
+| BLE/offline device forwarding through a companion app | React Native Relay | [React Native Relay guide](/sdks/react-native-relay) |
 
-Add the component from an ESP-IDF project:
+If you are not sure, start with C/POSIX on your development machine. It exercises the same shared behavior as the embedded ports without flashing hardware.
+
+## 2. Set Your Capture Values
+
+Every direct-upload SDK needs the same product values:
+
+| Value | Example | Why it matters |
+| --- | --- | --- |
+| Project API key | `project-key` | Sent as `X-Honch-Project-Key`. |
+| Capture endpoint | `https://capture.honch.io` | SDKs append `/capture`. |
+| Device model | `demo-board` | Lets you filter by hardware type. |
+| Firmware version | `1.0.0` | Drives firmware rollout and update events. |
+| Environment | `production` | Defaults to `production` when omitted. |
+
+For local capture testing, use your local service URL as the endpoint or host. Production firmware should use the hosted HTTPS endpoint.
+
+## 3. Send A First Event
+
+### ESP-IDF
+
+Install the component from an ESP-IDF project:
 
 ```bash
 idf.py add-dependency "honch-io/honch^0.1.0"
 ```
 
-If you vendor manually, copy or submodule the whole SDK repository into `components/honch`; the ESP-IDF component includes shared files from the repository `core/` directory.
-
-Initialize after NVS and Wi-Fi setup:
+Initialize NVS before Honch, then track and flush:
 
 ```c
 #include "honch.h"
@@ -34,7 +52,7 @@ static uint8_t event_buffer[16384];
 void app_main(void)
 {
     nvs_flash_init();
-    // Initialize Wi-Fi and SNTP for your product.
+    // Initialize Wi-Fi and time sync before expecting delivery.
 
     honch_config_t config = {
         .api_key = CONFIG_HONCH_API_KEY,
@@ -52,27 +70,19 @@ void app_main(void)
 }
 ```
 
-Run the example:
+Expected result: init queues lifecycle events, `app_started` is queued, and `honch_flush()` attempts a compact `POST /capture` upload when the device has network connectivity.
 
-```bash
-cd ports/esp-idf/example
-idf.py menuconfig
-idf.py set-target esp32s3
-idf.py flash monitor
-```
+### C/POSIX
 
-## C/POSIX
-
-Build the POSIX SDK from the SDK repository:
+Build the SDK and examples:
 
 ```bash
 cd ports/posix
-cmake -S . -B build -DHONCH_BUILD_TESTS=ON -DHONCH_BUILD_EXAMPLES=ON
+cmake -S . -B build -DHONCH_BUILD_EXAMPLES=ON
 cmake --build build
-ctest --test-dir build --output-on-failure
 ```
 
-Minimal use:
+Use a writable queue directory:
 
 ```c
 #include "honch/honch.h"
@@ -97,16 +107,18 @@ int main(void)
 }
 ```
 
-## MicroPython
+Expected result: `.honch-queue/state/` contains identity state, retryable failures stay in `.honch-queue/pending/`, and accepted events are consumed.
 
-The MicroPython SDK is not pure Python. Build firmware with the `_honch_core` user C module, then freeze or install the thin `honch` wrapper:
+### MicroPython
+
+Build firmware with the C user module. Installing Python files alone is not enough.
 
 ```bash
 make -C ports/unix \
   USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake
 ```
 
-Use the wrapper from MicroPython:
+Then use the Python wrapper:
 
 ```python
 import honch
@@ -124,9 +136,11 @@ client.flush()
 client.shutdown()
 ```
 
-## Arduino ESP32
+Expected result: files are created below `/honch/pending`, `/honch/dead`, and `/honch/state` as needed. Background flushing is disabled by the current user module, so call `flush()` explicitly.
 
-The Arduino SDK is an in-progress ESP32 wrapper. Include the library, connect Wi-Fi, and use the singleton:
+### Arduino ESP32
+
+Use this for ESP32 Arduino sketches that call `flush()` explicitly:
 
 ```cpp
 #include <WiFi.h>
@@ -149,17 +163,20 @@ void setup() {
   config.flushIntervalSeconds = 60;
   config.flushEventThreshold = 30;
 
-  Honch.begin(config);
-  Honch.track("app_started", "{\"source\":\"arduino\"}");
-  Honch.flush();
+  if (Honch.begin(config)) {
+    Honch.track("app_started", "{\"source\":\"arduino\"}");
+    Honch.flush();
+  }
 }
 
 void loop() {}
 ```
 
-## React Native Relay
+Expected result: `Honch.begin()` returns `true`, the device ID is derived from the ESP32 eFuse MAC, and queue state is stored through ESP32 `Preferences`.
 
-Use the relay when a firmware device cannot reach Capture directly and instead streams relay chunks over BLE to a companion app. The mobile app validates relay frames, stores completed compact messages durably, ACKs the device after durable receipt, and uploads the message to Capture.
+### React Native Relay
+
+Use relay only when the device cannot upload directly. The firmware sends relay frames over BLE; the mobile app stores completed messages, ACKs durable receipt, and uploads to Capture.
 
 ```ts
 import { NativeEventEmitter, NativeModules } from "react-native";
@@ -192,6 +209,34 @@ const relay = createMobileRelay({
 relay.subscribeNativeFrames();
 ```
 
-## Common Next Step
+Expected result: valid relay frames are assembled into durable mobile queue entries. The firmware should only receive an ACK after the completed compact message is durably stored.
 
-After the first event is queued, verify transport logs and queue behavior before shipping. All SDKs use the compact `POST /capture` contract and preserve retryable failures; permanent capture rejections are dropped or dead-lettered depending on the port.
+## 4. Verify The First Event
+
+Check these in order:
+
+1. The SDK init call succeeds.
+2. Your event call returns success or does not raise.
+3. Local queue state is created.
+4. The configured endpoint is correct and the SDK appends `/capture`.
+5. Capture returns `202`, `204`, or another success accepted by that port.
+
+If the first event does not appear, do not add more tracking yet. Fix delivery first, then add identity, sessions, and product events.
+
+## 5. Add The First Useful Product Events
+
+After the first event is verified, add only the events you would debug from:
+
+| Event | When to send |
+| --- | --- |
+| `app_started` | After SDK init and app startup. |
+| `button_pressed` | From a task or GPIO helper, not raw ISR context. |
+| `mode_changed` | When the device changes user-visible operating state. |
+| `sync_started` / `sync_finished` | Around network or relay sync flows. |
+| `error_seen` | When firmware sees an actionable recoverable error. |
+
+Keep property payloads small and stable. Prefer names like `mode`, `reason`, `source`, `duration_ms`, and `count` over ad hoc nested blobs.
+
+## Next Step
+
+Read the SDK-specific guide for your target. Each one shows the install path, configuration fields, expected runtime signs, and the first troubleshooting checks.

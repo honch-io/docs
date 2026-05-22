@@ -1,17 +1,30 @@
 ---
 title: FAQ
-description: Common questions and troubleshooting for Honch SDK integrations.
+description: Practical troubleshooting for Honch SDK integrations.
 ---
+
+Use this page when something does not behave the way the guide said it should. Start with the symptom, then check the listed causes in order.
 
 ## Which SDK should I use?
 
-Use ESP-IDF for ESP32 firmware built with ESP-IDF, C/POSIX for embedded Linux or local C harnesses, MicroPython for firmware that can include `_honch_core`, Arduino ESP32 for current Arduino milestone testing, and React Native Relay for companion apps that forward data from devices without direct internet access.
+Use ESP-IDF for ESP32 firmware built with ESP-IDF, C/POSIX for embedded Linux or local C harnesses, MicroPython for firmware that can include `_honch_core`, Arduino ESP32 for ESP32 sketches, and React Native Relay for companion apps that forward data from devices without direct internet access.
 
-## Are all SDKs production-ready?
+If you only need to validate event behavior locally, use C/POSIX first. It gives you visible queue files and does not require flashing hardware.
 
-No. ESP-IDF, C/POSIX, and MicroPython have current core-derived implementations. Arduino ESP32 and React Native Relay are in progress and should be treated as milestone packages until hardware and host-app validation are complete.
+## I Sent An Event. What Should Happen?
 
-## What endpoint do SDKs use?
+The expected path is:
+
+1. SDK accepts the event.
+2. Event is written to local queue.
+3. Flush builds a compact upload message.
+4. Transport sends a chunk frame to `/capture`.
+5. Capture returns success, retry, or permanent rejection.
+6. SDK consumes, keeps, drops, or dead-letters the queued event based on that response.
+
+Do not debug the dashboard first. Debug this chain first.
+
+## What Endpoint Do SDKs Use?
 
 Current SDKs send compact chunk frames to:
 
@@ -22,25 +35,78 @@ X-Honch-Project-Key: <project_api_key>
 X-Honch-Stream-Id: <stream_id>
 ```
 
-Capture also accepts the same format on `/e` and `/chunks`. The old `/batch` + CBOR upload path is not the active SDK contract.
+Capture also accepts the same format on `/e` and `/chunks`.
 
-## Should I use HTTPS?
+## Should I Use HTTPS?
 
 Use the hosted HTTPS Capture endpoint in production. SDKs send to the URL you configure, so local development can intentionally use HTTP against a local capture service.
 
-## What gets collected automatically?
+If HTTPS fails on firmware, check time sync and certificate setup before blaming event encoding.
 
-Every SDK-owned event includes device identity, device model, firmware version, SDK platform, SDK version, and environment. Sessions add `$session_id`. Battery-aware ports can add `$battery_level` and `$battery_low`. Embedded adapters can add connectivity and Wi-Fi signal events or properties where supported.
+## Events Are Queued But Not Appearing
 
-## Can user properties override SDK properties?
+Check in this order:
+
+1. Confirm the SDK initialized successfully.
+2. Confirm the endpoint URL is the base host and the SDK appends `/capture`.
+3. Confirm Wi-Fi or network connectivity.
+4. Confirm your API key.
+5. Check whether Capture returned `401`, `4xx`, `409`, `429`, or `5xx`.
+6. For local development, verify the Capture service is healthy and accepts compact chunks.
+
+What the queue means:
+
+| Queue state | Meaning |
+| --- | --- |
+| Pending grows | Delivery is not succeeding or responses are retryable. |
+| Dead-letter grows | Capture or the SDK classified events as permanently rejected. |
+| Queue drains | Capture accepted the message. |
+| RAM events disappear after reset | They were not persisted before power loss. |
+
+## What Does HTTP 401 Mean?
+
+Capture rejected the project key. SDKs treat this as an auth failure and do not keep retrying the same message indefinitely.
+
+Fix:
+
+1. Replace the configured project key.
+2. Restart or reinitialize the SDK if needed.
+3. Send a new event.
+4. Flush again.
+
+Previously rejected events may already be dropped or dead-lettered depending on the port.
+
+## What Errors Are Retryable?
+
+Network failures, timeouts, rate limits, `409`, and `5xx` responses are retryable. The shared retry policy starts at 1 second, caps at 5 minutes, and adds plus or minus 25% jitter.
+
+Permanent rejections are not useful to retry unchanged. Fix the payload, key, endpoint, or server-side expectation, then send a new event.
+
+## What Gets Collected Automatically?
+
+Every SDK-owned event includes device identity, device model, firmware version, SDK platform, SDK version, and environment. Sessions add `$session_id`. Battery-aware SDKs can add `$battery_level` and `$battery_low`. Embedded SDKs can add connectivity and Wi-Fi signal events or properties where supported.
+
+The SDK does not stamp noisy values such as free heap, uptime, or hardware revision on every event by default.
+
+## Can User Properties Override SDK Properties?
 
 No. SDK-owned auto properties win over user-supplied values with the same keys. Reserved keys such as `$device_id`, `$sdk_platform`, `$sdk_version`, and `$session_id` should be treated as SDK-owned.
 
-## What property format should I pass?
+If you need a custom version of one of those values, use a different property name.
+
+## What Property Format Should I Pass?
 
 C, ESP-IDF, and Arduino accept JSON strings. C/POSIX and MicroPython validate JSON-shaped public inputs at the API boundary. MicroPython accepts dictionaries and JSON-compatible values, then serializes them before calling `_honch_core`.
 
-## What happens when the device is offline?
+Rules that avoid most problems:
+
+- Use JSON objects for event properties and identify traits.
+- Keep event names stable and short.
+- Keep property names stable across firmware versions.
+- Avoid large nested blobs.
+- Use numeric values for counts, durations, and levels.
+
+## What Happens When The Device Is Offline?
 
 Events are queued locally before upload. Retryable transport failures keep events queued. Permanent capture rejections are dropped or moved to dead-letter storage depending on the port.
 
@@ -51,57 +117,42 @@ Durability varies by SDK:
 | ESP-IDF | RAM-first queue with NVS overflow/dead-letter handling. RAM-resident events can be lost on reset. |
 | C/POSIX | File-backed queue under `queue_directory`. |
 | MicroPython | File-backed queue under `queue_directory`. |
-| Arduino ESP32 | ESP32 `Preferences` queue in the current milestone. |
+| Arduino ESP32 | ESP32 `Preferences` queue. |
 | React Native Relay | MMKV or custom durable mobile store. |
 
-## Why are events queued but not appearing?
-
-Check in this order:
-
-1. Confirm the SDK initialized successfully.
-2. Confirm the endpoint URL includes the intended host and the SDK appends `/capture`.
-3. Confirm Wi-Fi or network connectivity.
-4. Confirm your API key.
-5. Check logs for `401`, retryable transport errors, or local queue pressure.
-6. For local development, verify Capture health and that your local stack accepts compact chunks.
-
-## What does HTTP 401 mean?
-
-Capture rejected the project key. SDKs treat this as an auth failure and do not keep retrying the same message indefinitely. Fix the configured API key and retry with new events.
-
-## What errors are retryable?
-
-Network failures, timeouts, rate limits, `409`, and `5xx` responses are retryable. The shared retry policy starts at 1 second, caps at 5 minutes, and adds plus or minus 25% jitter.
-
-## What happens on reset?
+## What Happens On Reset?
 
 `reset` clears queued data, clears session state, resets low-battery state, and restores or rotates identity depending on whether a device ID was explicitly configured. Treat it as a factory-reset boundary, not as a normal session action.
 
-## Why does MicroPython require a user C module?
+If you want to end a user flow, use `session_end`. If you want to disassociate an analytics identity, use reset deliberately and expect queue state to clear.
 
-The MicroPython wrapper deliberately stays thin. The shared C core owns queueing, identity, compact encoding, retry classification, and packetization. Firmware must include `_honch_core`; installing the Python wrapper alone is not enough.
+## Why Does MicroPython Require A User C Module?
 
-## Can I call `track` from an ISR?
+The MicroPython wrapper deliberately stays thin. Shared Core owns queueing, identity, compact encoding, retry classification, and relay packetization. Firmware must include `_honch_core`; installing the Python wrapper alone is not enough.
 
-Do not call full SDK tracking APIs from ISR context. ESP-IDF's `honch_track_gpio` is the safe path for GPIO edge tracking: the ISR only queues the pin number and a worker task later calls `honch_track`.
+Check:
 
-## How many GPIO pins can ESP-IDF track?
+```python
+import _honch_core
+import honch
+```
 
-The ESP-IDF GPIO adapter supports up to 8 pins and applies 50 ms debounce. It configures pins as inputs with pull-up enabled and emits an event with a `pin` property.
+Both imports should succeed before you debug client configuration.
 
-## How does React Native Relay ACK a device?
+## Can I Call `track` From An ISR?
+
+Do not call full SDK tracking APIs from ISR context. Tracking can validate input, take locks, allocate, encode, and queue.
+
+For ESP-IDF GPIO, use `honch_track_gpio`. The ISR only queues the pin number, and a worker task later calls `honch_track`.
+
+## How Many GPIO Pins Can ESP-IDF Track?
+
+The ESP-IDF GPIO helper supports up to 8 pins and applies 50 ms debounce. It configures pins as inputs with pull-up enabled and emits an event with a `pin` property.
+
+If GPIO events do not appear, check pin number, edge mode, pin conflicts, and whether registration succeeded.
+
+## How Does React Native Relay ACK A Device?
 
 The mobile relay ACKs a firmware message only after all relay chunks pass validation and the completed compact message is durably stored on mobile. Capture upload success is tracked separately by the relay queue and retry scheduler.
 
-## Where are tests?
-
-Each SDK has focused verification:
-
-| Area | Command |
-| --- | --- |
-| POSIX | `ctest --test-dir ports/posix/build --output-on-failure` after a POSIX build. |
-| ESP-IDF | `python3 ports/esp-idf/tests/test_cbor_migration.py`; firmware builds through `idf.py`. |
-| MicroPython | `PYTHONPATH=ports/micropython python3 -m unittest discover -s ports/micropython/tests -t . -v`. |
-| Arduino | `ports/arduino/scripts/verify-arduino.sh`. |
-| React Native Relay | `bun run typecheck`, `bun run test`, and native verification scripts from `ports/react-native-relay`. |
-| Wire fixtures | `python3 -m unittest spec.conformance.test_wire_v2_fixtures`. |
+If the device never receives ACKs, check frame checksum, offsets, source type, duplicate chunks, durable store writes, and native BLE writes.

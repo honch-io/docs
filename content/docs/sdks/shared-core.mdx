@@ -1,26 +1,26 @@
 ---
-title: Shared C Core
-description: Canonical portable SDK behavior used by the C-derived Honch SDKs.
+title: Shared Core
+description: Canonical portable SDK behavior used by Honch platform SDKs.
 ---
 
-The shared C core lives in `core/` in the SDK repository. Product applications normally use a platform port, but the core is the behavior source for ESP-IDF, C/POSIX, MicroPython, and Arduino ESP32.
+Shared Core lives in `core/` in the SDK repository. Product applications normally use a platform SDK, but Shared Core is the behavior source for ESP-IDF, C/POSIX, MicroPython, and Arduino ESP32.
 
 ## What The Core Owns
 
 - public event semantics;
 - strict input validation for event names, identities, and JSON-shaped inputs;
-- CBOR queue-entry construction before compact upload encoding;
+- local queue-entry construction before compact upload encoding;
 - SDK-owned automatic properties;
 - identify, set-property, sessions, reset, boot, shutdown, firmware update, and battery-low events;
 - queue limit policy and drop-oldest behavior;
 - retry classification and backoff timing;
-- compact wire-v2 event batch encoding;
+- compact event batch encoding;
 - compact chunk frame generation;
-- relay packetizer support.
+- relay chunk generation support.
 
-Ports own platform details: storage, transport, time, randomness, locking, logging, Wi-Fi or BLE state, and any board-specific adapters.
+Platform SDKs own platform details: storage, transport, time, randomness, locking, logging, Wi-Fi or BLE state, and any board-specific behavior.
 
-## Public Core API
+## Core API
 
 ```c
 honch_status_t honch_core_init(honch_client_t **client, const honch_core_config_t *config);
@@ -67,7 +67,7 @@ Common optional fields:
 | `flush_retry_max_ms` | `300000`. |
 | `battery_low_threshold` | `15`. |
 
-`disable_background_flush` keeps events queued until explicit `flush` calls. `battery_callback` can return `0`-`100` or a negative value when unknown. `auto_properties_callback` lets a port add validated adapter-owned properties such as `$wifi_rssi`.
+`disable_background_flush` keeps events queued until explicit `flush` calls. `battery_callback` can return `0`-`100` or a negative value when unknown. `auto_properties_callback` lets a platform SDK add validated properties such as `$wifi_rssi`.
 
 ## Status Codes
 
@@ -83,25 +83,25 @@ Common optional fields:
 | `HONCH_STATUS_ERROR_REJECTED` | Capture permanently rejected data. |
 | `HONCH_STATUS_ERROR_NOT_INITIALIZED` | Client is missing, closing, or already shut down. |
 | `HONCH_STATUS_ERROR_ALREADY_INITIALIZED` | A singleton-style port is already initialized. |
-| `HONCH_STATUS_ERROR_QUEUE_FULL` | Storage adapter could not queue the event. |
+| `HONCH_STATUS_ERROR_QUEUE_FULL` | Storage could not queue the event. |
 | `HONCH_STATUS_ERROR_TIMEOUT` | Transport timed out. |
 | `HONCH_STATUS_ERROR_INTERNAL` | Unexpected internal failure. |
 
-## Adapter Interfaces
+## Platform Interfaces
 
-The core depends on three adapter tables:
+Shared Core depends on three platform interface tables:
 
-| Adapter | Required responsibilities |
+| Interface | Required responsibilities |
 | --- | --- |
 | `honch_platform_ops_t` | `now_ms`, `uptime_ms`, random bytes, locking, unlocking, and logging. |
 | `honch_storage_ops_t` | persistent state, queue push, queue peek/read, consume, dead-letter, drop-oldest, clear, and depth. |
 | `honch_transport_ops_t` | post one compact chunk frame to Capture and classify the result. |
 
-Adapters should keep SDK behavior platform-neutral. Board-specific GPIO, Wi-Fi, BLE, battery, TLS, or filesystem choices belong in the port, not in the core.
+Platform integrations should keep SDK behavior platform-neutral. Board-specific GPIO, Wi-Fi, BLE, battery, TLS, or filesystem choices belong in the platform SDK, not in Shared Core.
 
-## Relay Packetizer
+## Relay Chunks
 
-The packetizer lets firmware expose queued data to gateways or companion apps:
+These APIs let firmware expose queued data to gateways or companion apps:
 
 ```c
 bool honch_core_data_available(honch_client_t *client, uint32_t source_mask);
@@ -113,13 +113,6 @@ honch_status_t honch_packetizer_abort(honch_packetizer_t *packetizer);
 
 `HONCH_DATA_SOURCE_EVENTS` is the active source. Logs and diagnostics are reserved in the mask but are not active SDK sources yet.
 
-## Verification
+## When To Read This Page
 
-Core tests cover packetization, retry policy, storage contract behavior, and compact wire-v2 fixtures. Run from the SDK root or through the port build:
-
-```bash
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-python3 -m unittest spec.conformance.test_wire_v2_fixtures
-```
+Most integrations should start with an SDK-specific guide. Use this page when you need to understand why ESP-IDF, C/POSIX, MicroPython, and Arduino behave the same around identity, queueing, lifecycle events, retries, and relay packetization.

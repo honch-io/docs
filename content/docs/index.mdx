@@ -3,19 +3,44 @@ title: Honch SDKs
 description: Product analytics SDKs for firmware, embedded Linux, MicroPython, Arduino, and mobile relay flows.
 ---
 
-Honch SDKs collect product analytics from connected hardware. They run inside firmware, embedded Linux software, MicroPython firmware, Arduino ESP32 sketches, or a mobile relay app, then queue device events locally and upload compact binary chunks to Honch Capture.
+Honch SDKs collect product analytics from connected hardware. They run inside firmware, embedded Linux software, MicroPython firmware, Arduino ESP32 sketches, or a mobile relay app, then queue events locally and upload compact binary chunks to Honch Capture.
 
-## Current SDKs
+## Start With The Integration Path
 
-| SDK | Status | Use it for |
-| --- | --- | --- |
-| ESP-IDF | Available, component version `0.1.0` | ESP32-family products built with ESP-IDF. |
-| C/POSIX | Available, core-derived `0.2.0` | Embedded Linux devices, local development harnesses, and C core validation. |
-| MicroPython | Available, core-derived `0.2.0` | Firmware that can include the `_honch_core` MicroPython user C module. |
-| Arduino ESP32 | In progress, library version `0.1.0` | ESP32 Arduino sketches that can tolerate the current milestone limitations. |
-| React Native Relay | In progress, package version `0.1.0` | Companion apps that receive relay chunks from offline devices and upload them later. |
+If you are setting up Honch for the first time, read these in order:
 
-The portable C core is the source of truth for shared behavior: event semantics, identity, lifecycle events, queue policy, retry classification, compact wire-v2 encoding, and packetization. Platform ports provide storage, transport, timing, randomness, and platform-specific adapters.
+1. [Quickstart](/quickstart): choose the right SDK, send one event, and verify the first delivery path.
+2. Your SDK guide: follow the install, configure, first event, verify, and troubleshoot steps for your target.
+3. [Shared Concepts](/concepts): understand identity, queueing, retries, lifecycle events, and compact upload behavior.
+4. [FAQ](/faq): use the failure-mode answers when events do not show up or queues behave unexpectedly.
+
+Do not start by adding every product event. First prove that one event can queue and either upload or remain pending for the expected reason.
+
+## Choose The SDK
+
+| SDK | Status | Use it for | Guide |
+| --- | --- | --- | --- |
+| ESP-IDF | Available, component version `0.1.0` | ESP32-family products built with ESP-IDF. | [ESP-IDF](/sdks/esp-idf) |
+| C/POSIX | Available, Shared Core behavior `0.2.0` | Embedded Linux devices, local development harnesses, and visible queue inspection. | [C/POSIX](/sdks/c-posix) |
+| MicroPython | Available, Shared Core behavior `0.2.0` | Firmware that can include the `_honch_core` MicroPython user C module. | [MicroPython](/sdks/micropython) |
+| Arduino ESP32 | In progress, library version `0.1.0` | ESP32 Arduino sketches using the current wrapper and explicit flush calls. | [Arduino ESP32](/sdks/arduino) |
+| React Native Relay | In progress, package version `0.1.0` | Companion apps that receive relay chunks from offline devices and upload them later. | [React Native Relay](/sdks/react-native-relay) |
+
+Shared Core is the source of truth for common SDK behavior: event semantics, identity, lifecycle events, queue policy, retry classification, compact upload encoding, and relay packetization. Platform ports provide storage, transport, timing, randomness, and platform-specific integration.
+
+## What You Should Verify First
+
+For every SDK, the first useful checkpoint is the same:
+
+| Step | Proof |
+| --- | --- |
+| SDK initializes | Init returns success or does not raise. |
+| Identity exists | Device ID is generated, configured, or persisted. |
+| Event queues | A first event is accepted locally. |
+| Flush runs | Transport attempts `POST /capture`. |
+| Failure is understood | Retryable failures stay pending; permanent rejections drop or dead-letter. |
+
+Once those are true, add product events, identity, sessions, battery, connectivity, GPIO, or relay flows.
 
 ## What Every SDK Sends
 
@@ -33,7 +58,7 @@ SDKs also emit lifecycle events where the platform supports them:
 
 ## Upload Contract
 
-SDKs upload one compact chunk frame at a time:
+SDKs upload compact chunk frames:
 
 ```text
 POST /capture
@@ -44,13 +69,13 @@ X-Honch-Stream-Id: <stream_id>
 
 Capture also accepts the same compact chunk format on `/e` and `/chunks`. Use the hosted HTTPS capture endpoint in production; local development endpoints can use HTTP when intentionally configured.
 
-## Start Here
+## Common Starting Points
 
 <Cards>
-  <Card title="Quickstart" href="/quickstart" description="Choose the right SDK and send your first event." />
-  <Card title="Shared Concepts" href="/concepts" description="Event model, identity, queues, retries, wire format, and relay behavior." />
-  <Card title="ESP-IDF" href="/sdks/esp-idf" description="Production ESP32 integration with ESP-IDF." />
-  <Card title="C/POSIX" href="/sdks/c-posix" description="Portable C SDK for embedded Linux and local harnesses." />
-  <Card title="MicroPython" href="/sdks/micropython" description="MicroPython wrapper backed by the C core user module." />
-  <Card title="React Native Relay" href="/sdks/react-native-relay" description="Mobile relay package for BLE/offline devices." />
+  <Card title="Quickstart" href="/quickstart" description="Send and verify the first event for each SDK path." />
+  <Card title="ESP-IDF" href="/sdks/esp-idf" description="Install the ESP-IDF component, initialize NVS, track events, and verify hardware logs." />
+  <Card title="C/POSIX" href="/sdks/c-posix" description="Build locally, inspect queue files, and confirm capture uploads." />
+  <Card title="MicroPython" href="/sdks/micropython" description="Build firmware with _honch_core and validate the Python wrapper." />
+  <Card title="Arduino ESP32" href="/sdks/arduino" description="Use the in-progress Arduino wrapper with explicit flushes." />
+  <Card title="FAQ" href="/faq" description="Troubleshoot queue, auth, transport, identity, and relay failures." />
 </Cards>

@@ -3,30 +3,56 @@ title: React Native Relay
 description: Receive relay chunks from offline devices, store them durably, and upload compact messages from a mobile app.
 ---
 
-React Native Relay is not a device analytics SDK. It is a companion-app relay package for devices that cannot upload directly to Capture. Firmware sends relay chunks over BLE; the mobile app validates and reassembles them, stores completed compact messages durably, ACKs the device, and uploads the message to Honch Capture.
+React Native Relay is not a device analytics SDK. It is the mobile side of an offline relay path: firmware sends relay chunks over BLE, the mobile app validates and reassembles them, stores completed compact messages durably, ACKs the device, and uploads the message to Honch Capture.
 
-Status: in progress, package version `0.1.0`, private package in the SDK repository.
+Status: in progress, package version `0.1.0`.
 
-## Production Contract
+## Before You Start
 
-Firmware uses the relay chunk frame from the shared spec:
+Use relay when the firmware device cannot upload directly. If the device has normal HTTP connectivity, use the firmware SDK instead.
+
+You need:
+
+| Requirement | Notes |
+| --- | --- |
+| React Native host app | The package does not include a complete host app. |
+| Native bridge | iOS and Android modules expose BLE frames and scheduling hooks. |
+| Durable store | MMKV in production, or another store that implements the relay storage contract. |
+| Firmware relay frames | Relay chunk frames from firmware. |
+| Project key | Used by the mobile uploader. |
+
+## 1. Install The Package
+
+Install the relay package into your React Native host app, then make sure the TypeScript package and native bridge are available to the app build:
+
+```bash
+bun add @honch/react-native-relay react-native-mmkv
+```
+
+Expected result: your app can import `@honch/react-native-relay`, and the native module is registered in your iOS and Android host projects.
+
+## 2. Confirm The Firmware Frame Contract
+
+Firmware sends relay chunk frames:
 
 | Field | Meaning |
 | --- | --- |
-| version | `1`. |
+| version | Relay protocol version expected by the package. |
 | source type | `1` for events. |
 | flags | first/final bits. |
-| sequence | big-endian message sequence. |
-| offset | big-endian payload offset. |
-| payload length | big-endian payload byte count. |
-| CRC16 | CRC over the relay header without CRC plus payload. |
-| payload | compact message bytes from the firmware queue. |
+| sequence | Big-endian message sequence. |
+| offset | Big-endian payload offset. |
+| payload length | Big-endian payload byte count. |
+| checksum | Frame checksum. |
+| payload | Compact message bytes from the firmware queue. |
 
-The relay validates frame version, reserved byte, payload length, CRC16, source type consistency, offsets, duplicate chunks, and completion before ACKing the device.
+The relay validates frame version, reserved values, payload length, checksum, source type consistency, offsets, duplicate chunks, and completion before ACKing the device.
 
-## BLE UUIDs
+Expected result: malformed frames are rejected and do not ACK the device.
 
-These UUIDs are reserved until product-assigned UUIDs are finalized:
+## 3. Configure BLE Notifications
+
+Reserved UUIDs until product-assigned UUIDs are finalized:
 
 ```text
 Service: 484f4e43-482d-5245-4c41-592d53445631
@@ -44,26 +70,9 @@ HonchRelayFrame
 }
 ```
 
-## Install And Build
+Expected result: your React Native host receives `HonchRelayFrame` events while subscribed.
 
-From `ports/react-native-relay`:
-
-```bash
-bun install
-bun run typecheck
-bun run test
-```
-
-Native checks:
-
-```bash
-bun run verify:ios:native
-bun run verify:android:native
-```
-
-`verify:ios:native` syntax-checks the Objective-C bridge against the iPhoneOS SDK. `verify:android:native` builds the Android library when an Android SDK path is configured.
-
-## Durable Storage
+## 4. Choose Durable Storage
 
 Use MMKV in production:
 
@@ -74,11 +83,11 @@ import { createMmkvRelayStore } from "@honch/react-native-relay";
 const durableStore = createMmkvRelayStore(createMMKV({ id: "honch-relay" }));
 ```
 
-The MMKV adapter stores relay state under `honch.relay.queue.v1`. It keeps incomplete chunk assemblies and completed messages until Capture accepts them or the relay permanently drops them.
+The MMKV store writes relay state under `honch.relay.queue.v1`. It keeps incomplete chunk assemblies and completed messages until Capture accepts them or the relay permanently drops them.
 
-For tests and local harnesses, use `createMemoryDurableStore` or `createJsonFileRelayStore`.
+For local development, `createMemoryDurableStore` or `createJsonFileRelayStore` can help you inspect behavior before wiring MMKV.
 
-## Wire The Relay
+## 5. Wire The Relay
 
 ```ts
 import { NativeEventEmitter, NativeModules } from "react-native";
@@ -111,6 +120,51 @@ const relay = createMobileRelay({
 relay.subscribeNativeFrames();
 ```
 
+Expected result: frame events are decoded, validated, assembled into completed messages, and stored durably before the device is ACKed.
+
+## 6. Upload To Capture
+
+Completed device messages are uploaded as canonical compact HTTP chunks:
+
+```text
+POST <endpointUrl>/capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <projectKey>
+X-Honch-Stream-Id: <streamId(message)>
+X-Honch-Relay-Id: <relayId>
+X-Honch-Relay-SDK-Platform: <relaySdkPlatform>
+X-Honch-Relay-SDK-Version: <relaySdkVersion>
+```
+
+The relay wraps the completed compact device message in the canonical HTTP chunk frame, but it does not rewrite the compact device message body.
+
+Upload outcomes:
+
+| Outcome | Queue action |
+| --- | --- |
+| Success response | Mark uploaded and remove queue state. |
+| `400`, `401`, `404` | Drop and remove queue state. |
+| Network error, `408`, `409`, `429`, `5xx`, other non-success | Keep pending and schedule retry. |
+
+Backoff starts at 1 second, caps at 5 minutes, and applies plus or minus 25% jitter.
+
+## 7. Add Native Host Requirements
+
+iOS:
+
+- Add `NSBluetoothAlwaysUsageDescription`.
+- Enable `bluetooth-central` background mode if receipt should continue in the background.
+- Install through a React Native iOS host `Podfile`; the podspec links CoreBluetooth and BackgroundTasks.
+
+Android:
+
+- Request `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` at runtime on Android 12+.
+- Request `ACCESS_FINE_LOCATION` where required for BLE scanning.
+- Include `androidx.work:work-runtime` for scheduled upload drains.
+- Register the package through the consuming React Native Android host.
+
+The package directory does not contain a complete iOS or Android host app, so validate BLE receipt, ACK writes, durable storage, and upload scheduling inside your consuming app.
+
 ## Public TypeScript Surface
 
 Important exports:
@@ -137,53 +191,13 @@ decodeRelayFrameEventPayload(frameBase64)
 
 `createMobileRelay` combines durable queueing, native BLE, native upload scheduling, optional native frame events, and upload draining.
 
-## Upload Behavior
+## Troubleshooting
 
-Completed device messages are uploaded as canonical compact wire-v2 HTTP chunks:
-
-```text
-POST <endpointUrl>/capture
-Content-Type: application/vnd.honch.chunk
-X-Honch-Project-Key: <projectKey>
-X-Honch-Stream-Id: <streamId(message)>
-X-Honch-Relay-Id: <relayId>
-X-Honch-Relay-SDK-Platform: <relaySdkPlatform>
-X-Honch-Relay-SDK-Version: <relaySdkVersion>
-```
-
-The relay wraps the completed compact device message in the canonical HTTP chunk frame, but it does not rewrite the compact device message body.
-
-Upload outcomes:
-
-| Outcome | Queue action |
+| Symptom | Check |
 | --- | --- |
-| Success response | Mark uploaded and remove queue state. |
-| `400`, `401`, `404` | Drop and remove queue state. |
-| Network error, `408`, `409`, `429`, `5xx`, other non-success | Keep pending and schedule retry. |
-
-Backoff starts at 1 second, caps at 5 minutes, and applies plus or minus 25% jitter.
-
-## Native Host Requirements
-
-iOS:
-
-- Add `NSBluetoothAlwaysUsageDescription`.
-- Enable `bluetooth-central` background mode if receipt should continue in the background.
-- Install through a React Native iOS host `Podfile`; the podspec links CoreBluetooth and BackgroundTasks.
-
-Android:
-
-- Request `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` at runtime on Android 12+.
-- Request `ACCESS_FINE_LOCATION` where required for BLE scanning.
-- Include `androidx.work:work-runtime` for scheduled upload drains.
-- Register the package through the consuming React Native Android host.
-
-The package directory does not contain a complete iOS or Android host app. Production sign-off requires validation inside the consuming app.
-
-## E2E Harness
-
-```bash
-bun run e2e:capture
-```
-
-The harness wraps a compact wire-v2 fixture in relay frames, feeds frames through `createMobileRelay().receiveFrame()`, verifies offline retry preservation, drains to Capture when configured, rejects malformed frames without ACK, and can verify ClickHouse rows in a live local stack.
+| Device never gets ACK | Frame validation, checksum, offsets, completion, durable store write. |
+| Duplicate chunks arrive | The queue should reject or ignore duplicates by device and sequence. |
+| Upload retries forever | Endpoint URL, project key, network, Capture response. |
+| Message drops | Response was permanent (`400`, `401`, `404`) or frame was malformed. |
+| Native event missing | Bridge registration, BLE permissions, frame notify subscription. |
+| Background upload missing | iOS background mode or Android WorkManager setup. |

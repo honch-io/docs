@@ -1,23 +1,28 @@
 ---
 title: ESP-IDF
-description: Integrate Honch analytics into ESP32 firmware built with ESP-IDF.
+description: Install, configure, verify, and troubleshoot Honch in ESP32 firmware built with ESP-IDF.
 ---
 
-The ESP-IDF SDK is a C component for ESP32-family firmware. It wraps the shared C core with ESP-IDF adapters for NVS, HTTP, Wi-Fi metadata, time, randomness, FreeRTOS locking, and GPIO edge tracking.
+The ESP-IDF SDK is the production ESP32 component. It uses Shared Core behavior with ESP-IDF integration for NVS, HTTP, Wi-Fi metadata, time, randomness, FreeRTOS locking, and GPIO edge tracking.
 
 Status: available as component version `0.1.0`, built on shared SDK behavior version `0.2.0`.
 
-## Requirements
+## Before You Start
 
-- ESP-IDF `>=5.0`.
-- ESP32-family board supported by ESP-IDF.
-- NVS initialized before `honch_init`.
-- Wi-Fi configured for delivery.
-- Honch project API key.
+You need:
 
-The component depends on ESP-IDF packages for NVS, HTTP client, Wi-Fi, event loop, TLS certificate bundle, timers, pthread support, GPIO, CBOR, and cJSON.
+| Requirement | Notes |
+| --- | --- |
+| ESP-IDF | Version `>=5.0`. |
+| Target board | Any ESP32-family board supported by ESP-IDF. |
+| NVS | Must be initialized before `honch_init`. |
+| Network | Wi-Fi must be configured before events can reach Capture. |
+| Project key | Sent as `X-Honch-Project-Key`. |
+| Event buffer | Caller-owned RAM buffer, recommend at least `8192` bytes. |
 
-## Install
+The component depends on ESP-IDF packages for NVS, HTTP client, Wi-Fi, event loop, TLS certificate bundle, timers, pthread support, GPIO, and JSON parsing.
+
+## 1. Install The Component
 
 Use ESP Component Manager:
 
@@ -25,7 +30,7 @@ Use ESP Component Manager:
 idf.py add-dependency "honch-io/honch^0.1.0"
 ```
 
-Or vendor the SDK repository as a component:
+Or vendor the SDK repository:
 
 ```bash
 git submodule add https://github.com/honch-io/honch.git components/honch
@@ -33,7 +38,11 @@ git submodule add https://github.com/honch-io/honch.git components/honch
 
 Manual vendoring must include the whole SDK repository, not only `ports/esp-idf/honch`, because the component compiles shared sources from `core/`.
 
-## Configure
+Expected result: your ESP-IDF project can include `honch.h`, and the component build can resolve the SDK sources.
+
+## 2. Add Configuration
+
+The public config is:
 
 ```c
 typedef struct {
@@ -51,23 +60,30 @@ typedef struct {
 } honch_config_t;
 ```
 
-| Field | Required | Default |
-| --- | --- | --- |
-| `api_key` | Yes | none |
-| `host` | Yes | none |
-| `device_model` | Yes | none |
-| `firmware_version` | Yes | none |
-| `environment` | No | `production` |
-| `event_buffer` | Yes | none |
-| `event_buffer_size` | Yes | recommend at least `8192` bytes |
-| `flush_interval_seconds` | No | `60` |
-| `flush_event_threshold` | No | `30` |
-| `battery_callback` | No | `NULL` |
-| `battery_low_threshold` | No | `15` |
+Required fields:
 
-Config strings are copied into fixed-size internal buffers during init. Keep values short and product-readable: device model names, semantic firmware versions, and environment labels are used for filtering analytics later.
+| Field | What to put there |
+| --- | --- |
+| `api_key` | Project API key. |
+| `host` | Capture base URL, for example `https://capture.honch.io`. |
+| `device_model` | Product or board model, for example `controller-v2`. |
+| `firmware_version` | Current firmware version. |
+| `event_buffer` | Static or long-lived RAM buffer. |
+| `event_buffer_size` | Buffer size in bytes. |
 
-## Initialize
+Optional fields:
+
+| Field | Default |
+| --- | --- |
+| `environment` | `production` |
+| `flush_interval_seconds` | `60` |
+| `flush_event_threshold` | `30` |
+| `battery_callback` | `NULL` |
+| `battery_low_threshold` | `15` |
+
+Config strings are copied into internal buffers during init. Keep values short, stable, and useful for filtering.
+
+## 3. Initialize NVS, Network, And Honch
 
 ```c
 #include "honch.h"
@@ -82,8 +98,11 @@ void app_main(void)
         nvs_flash_erase();
         ret = nvs_flash_init();
     }
+    if (ret != ESP_OK) {
+        return;
+    }
 
-    // Initialize Wi-Fi and, if available, SNTP before tracking production events.
+    // Initialize Wi-Fi and SNTP here.
 
     honch_config_t config = {
         .api_key = CONFIG_HONCH_API_KEY,
@@ -94,8 +113,7 @@ void app_main(void)
         .event_buffer_size = sizeof(event_buffer),
     };
 
-    honch_err_t err = honch_init(&config);
-    if (err != HONCH_OK) {
+    if (honch_init(&config) != HONCH_OK) {
         return;
     }
 
@@ -104,43 +122,52 @@ void app_main(void)
 }
 ```
 
-`honch_init` starts the shared core, initializes the RAM-first/NVS storage adapter, initializes the HTTP transport, queues boot and firmware lifecycle events, starts background flushing, and starts the GPIO worker task.
+Expected result after `honch_init`:
 
-## Public API
+- device identity is loaded or generated;
+- boot lifecycle events are queued;
+- firmware version is compared against persisted state;
+- RAM-first/NVS storage is ready;
+- HTTP transport is ready;
+- background flushing starts;
+- the GPIO worker task starts.
+
+## 4. Track Custom Events
 
 ```c
-honch_err_t honch_init(const honch_config_t *config);
-honch_err_t honch_shutdown(void);
-
-honch_err_t honch_track(const char *event, const char *properties_json);
-honch_err_t honch_identify(const char *distinct_id, const char *properties_json);
-honch_err_t honch_set_property(const char *key, const char *value_json);
-
-honch_err_t honch_session_start(const char *session_name);
-honch_err_t honch_session_end(void);
-
-honch_err_t honch_flush(void);
-honch_err_t honch_reset(void);
-
-const char *honch_get_device_id(void);
-
-honch_err_t honch_track_gpio(gpio_num_t pin, const char *event_name, honch_gpio_mode_t mode);
+honch_track("button_pressed", "{\"pin\":0,\"source\":\"boot_button\"}");
+honch_track("mode_changed", "{\"mode\":\"recording\"}");
+honch_flush();
 ```
 
-`properties_json` and identity traits are JSON object strings. `value_json` in `honch_set_property` is a JSON value string. Invalid input returns `HONCH_ERR_INVALID_ARG`.
+Rules:
 
-## Events And Identity
+- `properties_json` must be a JSON object string.
+- Invalid JSON returns `HONCH_ERR_INVALID_ARG`.
+- SDK-owned properties such as `$device_id`, `$sdk_version`, and `$session_id` win over user properties with the same keys.
+- Do not call `honch_track` directly from ISR context.
 
-- `honch_track` queues a custom event.
-- `honch_identify` persists a new `distinct_id` and queues `$identify`.
-- `honch_set_property` queues `$set_property`; it does not persist future context.
-- `honch_session_start` queues `$session_start` and adds `$session_id` to later events.
-- `honch_session_end` queues `$session_end` and clears the active session.
-- `honch_reset` clears queued events and resets identity state.
+Expected result: events are queued immediately. Delivery happens on explicit `honch_flush`, flush threshold, or flush interval when network is available.
 
-The ESP-IDF adapter stores `device_id`, `distinct_id`, and firmware version in NVS. When no explicit device ID is configured through the core, the current adapter generates and persists a random 32-character hex ID.
+## 5. Add Identity And Sessions
 
-## GPIO Tracking
+Use identity when you want analytics to follow an account, installation, or user-facing owner:
+
+```c
+honch_identify("account-123", "{\"plan\":\"beta\"}");
+```
+
+Use sessions to group bounded flows:
+
+```c
+honch_session_start("calibration");
+honch_track("calibration_step", "{\"step\":1}");
+honch_session_end();
+```
+
+Expected result: identified events use the new `distinct_id`, and events inside a session include `$session_id`.
+
+## 6. Track GPIO Safely
 
 ```c
 honch_track_gpio(GPIO_NUM_0, "button_pressed", HONCH_GPIO_FALLING_EDGE);
@@ -152,13 +179,44 @@ Supported modes:
 - `HONCH_GPIO_FALLING_EDGE`
 - `HONCH_GPIO_BOTH_EDGES`
 
-The adapter supports up to 8 tracked pins. It configures each pin as input with pull-up enabled, installs an ISR service when needed, queues pin numbers from ISR context, and calls `honch_track` from a FreeRTOS worker task after 50 ms debounce. The emitted event includes `{"pin": <gpio_number>}`.
+The GPIO helper supports up to 8 tracked pins. It configures each pin as input with pull-up enabled, installs an ISR service when needed, queues pin numbers from ISR context, and calls `honch_track` from a FreeRTOS worker task after 50 ms debounce.
 
-## Queue And Transport
+Expected event properties:
 
-The default public init path uses a RAM-first queue. `event_buffer` stores RAM queue entries up to 64 events and the available buffer size. When the RAM path cannot accept another event or NVS-backed events already exist, the adapter uses NVS queue storage. NVS also stores dead-lettered events and identity state.
+```json
+{"pin":0}
+```
 
-Tradeoff: RAM-resident events are fast but can be lost on reset or power loss. Use an NVS-only custom integration if every queued event must survive power loss.
+## 7. Verify On Hardware
+
+Run the example app:
+
+```bash
+cd ports/esp-idf/example
+idf.py menuconfig
+idf.py set-target esp32s3
+idf.py flash monitor
+```
+
+Check these signs:
+
+| Sign | Meaning |
+| --- | --- |
+| Honch init succeeds | Config, NVS, storage, and transport are initialized. |
+| Device gets IP | The SDK can attempt uploads. |
+| `HONCH_HTTP_PAYLOAD` or transport logs appear | Flush path is running. |
+| HTTP `202` or `204` | Capture accepted the chunk state. |
+| HTTP `401` | Project key is wrong. |
+
+If events queue but do not upload, verify Wi-Fi, time/TLS setup, capture host, and API key before adding more events.
+
+## Queue And Durability
+
+The default public init path uses a RAM-first queue. `event_buffer` stores RAM queue entries up to 64 events and the available buffer size. When the RAM path cannot accept another event or NVS-backed events already exist, the SDK uses NVS queue storage.
+
+Tradeoff: RAM-resident events are fast but can be lost on reset or power loss. NVS stores identity, firmware version, overflow events, and dead-lettered events.
+
+## Transport Contract
 
 Flush sends compact chunk frames to:
 
@@ -169,28 +227,22 @@ X-Honch-Project-Key: <api_key>
 X-Honch-Stream-Id: <stream_id>
 ```
 
-HTTP `202` means a non-final chunk was stored; `204` means the full message was accepted. `401` is treated as auth failure. `408`, `409`, `429`, `5xx`, and network errors are retryable.
+Response handling:
 
-## Example App
+| Response | Behavior |
+| --- | --- |
+| `202` | Non-final chunk stored; send the next frame. |
+| `204` | Full message accepted. |
+| `401` | Auth failure; do not retry the same message indefinitely. |
+| `408`, `409`, `429`, `5xx`, network errors | Retry with backoff. |
 
-The example app configures Wi-Fi, SNTP, NVS, Honch, GPIO 0 tracking, sessions, heartbeat tracking, and manual flushes.
+## Troubleshooting
 
-```bash
-cd ports/esp-idf/example
-idf.py menuconfig
-idf.py set-target esp32s3
-idf.py flash monitor
-```
-
-Look for `HONCH_HTTP_PAYLOAD` and transport status logs while testing. If events queue but do not send, verify Wi-Fi, time/TLS setup, capture URL, and API key.
-
-## Verify
-
-From the SDK repository:
-
-```bash
-python3 ports/esp-idf/tests/test_cbor_migration.py
-python3 ports/esp-idf/tests/test_footprint_measurement.py
-```
-
-To build firmware, activate your ESP-IDF environment and run `idf.py build` from `ports/esp-idf/example`.
+| Symptom | Check |
+| --- | --- |
+| `honch_init` fails | NVS init, required config fields, event buffer pointer and size. |
+| Events never send | Wi-Fi IP, TLS time sync, host URL, API key. |
+| `401` in logs | Replace the project key and send a new event. |
+| GPIO events missing | Pin number, edge mode, pin conflicts, 8-pin limit. |
+| Queue grows | Network path or Capture response is retryable; inspect transport logs. |
+| Events lost after reset | They were likely still in RAM queue. |

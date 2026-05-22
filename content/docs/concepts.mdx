@@ -1,9 +1,9 @@
 ---
 title: Shared Concepts
-description: The event model, identity, local queues, retries, wire format, and relay behavior shared by Honch SDKs.
+description: The event model, identity, local queues, retries, upload behavior, and relay behavior shared by Honch SDKs.
 ---
 
-The official SDKs share one contract even when each port has different platform adapters. The portable C core implements the canonical behavior for event semantics, identity, lifecycle events, queue policy, retry classification, compact wire-v2 encoding, and packetization.
+The official SDKs share one contract even when each port integrates with a different platform. Shared Core implements the canonical behavior for event semantics, identity, lifecycle events, queue policy, compact upload encoding, and relay packetization.
 
 ## Event Model
 
@@ -11,7 +11,7 @@ Each event contains:
 
 | Field | Meaning |
 | --- | --- |
-| `event` | Event name, up to 128 characters in the C-derived SDKs. |
+| `event` | Event name, up to 128 characters in the Shared Core SDKs. |
 | `distinct_id` | The analytics identity attached to the event. Defaults to the device ID. |
 | `timestamp` | Assigned when the SDK tracks the event. |
 | `properties` | JSON-compatible custom properties plus SDK-owned automatic properties. |
@@ -24,7 +24,7 @@ The SDK tracks two IDs:
 
 | ID | Purpose |
 | --- | --- |
-| `$device_id` | Stable hardware or generated device identity. Persisted by the port's storage adapter. |
+| `$device_id` | Stable hardware or generated device identity. Persisted by the SDK. |
 | `distinct_id` | Analytics identity. Starts as the device ID and changes when you call `identify`. |
 
 `reset` is a factory-reset-style boundary. It clears queued events, resets session state, resets low-battery state, and restores or rotates identity depending on whether the device ID was explicitly configured.
@@ -43,7 +43,7 @@ Every event includes:
 | `$environment` | Always, defaults to `production`. |
 | `$session_id` | Only while a session is active. |
 | `$battery_level` | Only when a battery callback is configured and returns `0`-`100`. |
-| `$wifi_rssi` | Only on embedded adapters that can read Wi-Fi signal strength. |
+| `$wifi_rssi` | Only on embedded SDKs that can read Wi-Fi signal strength. |
 
 The SDK explicitly does not stamp noisy values such as free heap, uptime, or hardware revision on every event.
 
@@ -57,7 +57,7 @@ The SDK explicitly does not stamp noisy values such as free heap, uptime, or har
 | `$battery_low` | Queued once when battery falls below the configured threshold; re-armed after recovery. |
 | `$session_start` | Queued by `session_start`. |
 | `$session_end` | Queued by `session_end` or before replacing an active session. |
-| `$connectivity_change` | Queued by ports that expose connectivity state, such as MicroPython's wrapper method or ESP connectivity adapters. |
+| `$connectivity_change` | Queued by SDKs that expose connectivity state, such as MicroPython's wrapper method or ESP connectivity support. |
 
 Embedded reset reasons use strings such as `power_on`, `software`, `panic`, `watchdog`, `deepsleep`, `brownout`, or `unknown` where the port can provide them.
 
@@ -78,14 +78,14 @@ Durability depends on the port:
 | ESP-IDF | RAM-first queue backed by a caller-provided buffer, with NVS used for overflow and dead-letter handling. RAM-resident events can be lost on reset or power loss. |
 | C/POSIX | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory`; default durability fsyncs queued events. |
 | MicroPython | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory` through the user C module. |
-| Arduino ESP32 | Preferences-backed state and queue for the current ESP32 milestone. |
+| Arduino ESP32 | Preferences-backed state and queue. |
 | React Native Relay | MMKV or custom durable store for completed relay messages and incomplete chunk assemblies. |
 
 ## Flushing And Retry
 
-The C-derived SDKs default to a 60 second flush interval, a 30 event flush threshold, batches of 20 events capped at 50, 1 second initial backoff, and 5 minute max backoff. Retry jitter is plus or minus 25%.
+The Shared Core SDKs default to a 60 second flush interval, a 30 event flush threshold, batches of 20 events capped at 50, 1 second initial backoff, and 5 minute max backoff. Retry jitter is plus or minus 25%.
 
-Response handling follows the shared compact-wire policy:
+Response handling follows the shared upload policy:
 
 | Response | SDK behavior |
 | --- | --- |
@@ -97,7 +97,7 @@ Response handling follows the shared compact-wire policy:
 
 ## Compact Upload Format
 
-SDKs upload compact wire-v2 chunk frames:
+SDKs upload compact chunk frames:
 
 ```text
 POST /capture
@@ -108,13 +108,13 @@ X-Honch-Stream-Id: <stream_id>
 
 The project key is a transport credential, not part of the device message body. A single HTTP upload can contain a complete final frame; constrained links can split the same compact message into multiple frames.
 
-The compact event message uses varints, ZigZag signed integers, CRC16, a string table, batch context, event deltas, typed property values, and strict capture-side validation. It is not JSON, CBOR, MessagePack, or protobuf on the upload path.
+You do not need to construct the compact message by hand when using an SDK. Treat it as the SDK-owned upload payload; configure the endpoint and project key, then let the SDK handle encoding, chunking, retries, and validation responses.
 
 ## Relay Flow
 
-Relay is for devices that cannot upload directly. Firmware uses the packetizer API to split a queued compact message into relay chunks. A gateway or companion app:
+Relay is for devices that cannot upload directly. Firmware splits a queued compact message into relay chunks. A gateway or companion app:
 
-1. validates relay frame version, reserved byte, payload length, and CRC16;
+1. validates relay frame version, payload length, checksum, and ordering;
 2. reassembles chunks by source device ID and sequence;
 3. stores the complete compact message durably;
 4. ACKs the firmware only after durable receipt;
@@ -122,6 +122,6 @@ Relay is for devices that cannot upload directly. Firmware uses the packetizer A
 
 React Native Relay implements this mobile side for iOS and Android hosts.
 
-## Shared Verification
+## Integration Check
 
-The SDK repository includes conformance fixtures for event behavior, HTTP response policy, relay chunks, and wire-v2 frames. Official ports should be checked against those fixtures whenever shared SDK behavior changes.
+When you integrate an SDK, verify the behavior that matters to your product: one event queues, flush attempts delivery, retryable failures stay pending, and permanent rejections are not retried forever.
