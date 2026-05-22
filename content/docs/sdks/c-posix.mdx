@@ -1,0 +1,224 @@
+---
+title: C/POSIX
+description: Use the Honch C/POSIX SDK on embedded Linux, local harnesses, and portable C targets.
+---
+
+The C/POSIX SDK is the reference platform port for the shared C core. It is useful for embedded Linux devices, local development harnesses, integration tests, and validating portable SDK behavior before adapting it to constrained ports.
+
+Status: available, core-derived `0.2.0`.
+
+## Requirements
+
+- CMake `3.20+`.
+- C11 compiler.
+- libcurl.
+- A writable queue directory owned by one active SDK client/process at a time.
+
+## Build
+
+```bash
+cd ports/posix
+cmake -S . -B build -DHONCH_BUILD_TESTS=ON -DHONCH_BUILD_EXAMPLES=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Optional build switches:
+
+| Switch | Purpose |
+| --- | --- |
+| `HONCH_BUILD_TESTS` | Build C tests and migration guards. |
+| `HONCH_BUILD_EXAMPLES` | Build example programs. |
+| `HONCH_BUILD_E2E` | Build real Capture E2E test. |
+| `HONCH_BUILD_BENCHMARKS` | Build POSIX benchmark harness. |
+
+## Configure
+
+```c
+typedef struct honch_config {
+    const char *api_key;
+    const char *endpoint_url;
+    const char *device_id;
+    const char *device_model;
+    const char *firmware_version;
+    const char *environment;
+    const char *queue_directory;
+    size_t batch_size;
+    size_t max_queued_events;
+    size_t max_event_bytes;
+    unsigned int transport_timeout_ms;
+    unsigned int flush_interval_seconds;
+    size_t flush_event_threshold;
+    unsigned int flush_retry_initial_ms;
+    unsigned int flush_retry_max_ms;
+    int disable_background_flush;
+    int (*battery_callback)(void);
+    int battery_low_threshold;
+    honch_auto_properties_fn auto_properties_callback;
+    void *auto_properties_userdata;
+    honch_durability_mode_t durability_mode;
+} honch_config_t;
+```
+
+Required:
+
+- `api_key`
+- `endpoint_url`
+- `device_model`
+- `firmware_version`
+- `queue_directory`
+
+Defaults:
+
+| Field | Default |
+| --- | --- |
+| `device_id` | generated and persisted when omitted |
+| `environment` | `production` |
+| `batch_size` | `20`, capped at `50` |
+| `max_queued_events` | `1000` |
+| `max_event_bytes` | `16384` |
+| `transport_timeout_ms` | `10000` |
+| `flush_interval_seconds` | `60` |
+| `flush_event_threshold` | `30` |
+| `flush_retry_initial_ms` | `1000` |
+| `flush_retry_max_ms` | `300000` |
+| `battery_low_threshold` | `15` |
+| `durability_mode` | `HONCH_DURABILITY_SYNC_ALWAYS` |
+
+Set `disable_background_flush` nonzero to require explicit `honch_flush` calls.
+
+## Basic Use
+
+```c
+#include "honch/honch.h"
+
+int main(void)
+{
+    honch_config_t config = {
+        .api_key = "project-key",
+        .endpoint_url = "https://capture.honch.io",
+        .device_model = "linux-gateway",
+        .firmware_version = "1.0.0",
+        .environment = "production",
+        .queue_directory = ".honch-queue",
+        .durability_mode = HONCH_DURABILITY_SYNC_ALWAYS,
+    };
+
+    honch_client_t *client = NULL;
+    honch_status_t status = honch_init(&client, &config);
+    if (status != HONCH_OK) {
+        return 1;
+    }
+
+    honch_identify(client, "user-123", "{\"plan\":\"beta\"}");
+    honch_session_start(client, "recording");
+    honch_track(client, "recording_started", "{\"mode\":\"hdr\"}");
+    honch_session_end(client);
+    honch_flush(client);
+    honch_shutdown(client);
+}
+```
+
+## Public API
+
+```c
+honch_status_t honch_init(honch_client_t **client, const honch_config_t *config);
+honch_status_t honch_track(honch_client_t *client, const char *event_name, const char *properties_json);
+honch_status_t honch_identify(honch_client_t *client, const char *distinct_id, const char *traits_json);
+honch_status_t honch_set_property(honch_client_t *client, const char *key, const char *value_json);
+honch_status_t honch_session_start(honch_client_t *client, const char *session_name);
+honch_status_t honch_session_end(honch_client_t *client);
+honch_status_t honch_flush(honch_client_t *client);
+honch_status_t honch_reset(honch_client_t *client);
+honch_status_t honch_shutdown(honch_client_t *client);
+const char *honch_get_device_id(honch_client_t *client);
+honch_status_t honch_copy_device_id(honch_client_t *client, char *buffer, size_t buffer_size);
+const char *honch_status_string(honch_status_t status);
+```
+
+`honch_get_device_id` returns a borrowed pointer that remains valid until reset or shutdown. Use `honch_copy_device_id` for threaded callers.
+
+## JSON Input Rules
+
+- `properties_json` and `traits_json` must be JSON objects.
+- `value_json` in `honch_set_property` must be any valid JSON value.
+- Event names must be nonblank and no longer than 128 characters.
+- Distinct IDs must be nonblank and no longer than 256 characters.
+
+Invalid input returns `HONCH_ERROR_INVALID_ARGUMENT`. C/POSIX intentionally fails closed instead of silently dropping malformed user properties.
+
+## Local Storage
+
+The SDK stores state and queue files under `queue_directory`:
+
+```text
+.honch-queue/
+  pending/
+  dead/
+  state/
+    device_id
+    distinct_id
+    firmware_version
+```
+
+Queue behavior:
+
+- events are written atomically through temp-file rename;
+- `HONCH_DURABILITY_SYNC_ALWAYS` fsyncs each event file and directory before returning;
+- `HONCH_DURABILITY_OS_BUFFERED` keeps atomic rename behavior but skips per-event fsyncs;
+- retryable failures keep files in `pending/`;
+- permanent rejections move attempted files to `dead/`;
+- full queues drop the oldest event to admit a new one;
+- reset rotates identity and clears `pending/` and `dead/`.
+
+## Transport
+
+The POSIX transport uses libcurl and posts compact chunks to:
+
+```text
+POST <endpoint_url>/capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <api_key>
+X-Honch-Stream-Id: <stream_id>
+```
+
+Use HTTPS in production. Local E2E defaults point at `http://127.0.0.1:8001`.
+
+## Auto Properties Hook
+
+`auto_properties_callback` lets a platform adapter add automatic properties without modifying the core:
+
+```c
+static honch_status_t add_platform_properties(
+    void *userdata,
+    honch_property_sink_fn sink,
+    void *sink_ctx)
+{
+    int rssi = *(int *)userdata;
+    char value[16];
+    snprintf(value, sizeof(value), "%d", rssi);
+    return sink(sink_ctx, "$wifi_rssi", value);
+}
+```
+
+The callback runs while constructing an event. It should be fast and must not call Honch APIs for the same client.
+
+## Examples
+
+```bash
+./build/example/posix_device/honch_posix_example
+./build/example/connected_camera/honch_connected_camera_example
+./build/example/posix_gpio/honch_posix_gpio_example
+```
+
+GPIO tracking is not in the reusable C core. Use a platform adapter like `example/posix_gpio` to debounce platform signals and call `honch_track` from normal process context.
+
+## E2E Test
+
+The opt-in E2E test sends real events to a configured service and can verify ClickHouse rows:
+
+```bash
+cmake -S . -B build-e2e -DHONCH_BUILD_TESTS=ON -DHONCH_BUILD_E2E=ON
+cmake --build build-e2e
+ctest --test-dir build-e2e --output-on-failure -R honch_posix_e2e
+```

@@ -1,0 +1,172 @@
+---
+title: MicroPython
+description: Build and use the Honch MicroPython SDK backed by the shared C core user module.
+---
+
+The MicroPython SDK is a thin Python wrapper around the `_honch_core` user C module. It is not a standalone pure-Python SDK. Firmware must be built with the Honch user module so the shared C core can provide event semantics, identity, queueing, retry, compact wire encoding, and packetization.
+
+Status: available, core-derived `0.2.0`.
+
+## Build Into Firmware
+
+From a MicroPython checkout, build a port with the user module:
+
+```bash
+make -C ports/unix \
+  USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake
+```
+
+For board firmware, pass the same user module path to the target port and freeze the Python wrapper:
+
+```bash
+make BOARD=MYBOARD \
+  USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake \
+  FROZEN_MANIFEST=/path/to/SDK/ports/micropython/manifest.py
+```
+
+`mip` can install the wrapper files from `ports/micropython/package.json`, but those files require firmware that already contains `_honch_core`.
+
+## Memory Note
+
+The module reserves a 64 KiB C heap by default for ports such as `rp2`, where runtime `malloc` and `free` are not available unless firmware sets `MICROPY_C_HEAP_SIZE`. The C core allocates client state, event buffers, queue processing state, and packetization buffers.
+
+## Configure
+
+Required:
+
+- `api_key`
+- `endpoint_url`
+- `device_model`
+- `firmware_version`
+- `queue_directory`
+
+Optional:
+
+| Option | Default |
+| --- | --- |
+| `device_id` | generated and persisted when omitted |
+| `environment` | `production` |
+| `batch_size` | `20`, capped at `50` |
+| `max_queued_events` | `1000` |
+| `max_event_bytes` | `16384` |
+| `transport_timeout_ms` | `10000` |
+| `flush_interval_seconds` | `60` in the wrapper config, but the current user module disables background flushing |
+| `flush_event_threshold` | `30` |
+| `flush_retry_initial_ms` | `1000` |
+| `flush_retry_max_ms` | `300000` |
+| `disable_background_flush` | `False` in Python config; the user module currently passes disabled background flushing to the core |
+| `battery_low_threshold` | `15` |
+
+Python `platform=`, `transport=`, `battery_callback=`, and `auto_properties_callback=` hooks are rejected. Board behavior belongs in the C user-module adapters.
+
+## Basic Use
+
+```python
+import honch
+
+client = honch.Honch(
+    api_key="project-key",
+    endpoint_url="https://capture.honch.io",
+    device_model="pico-w",
+    firmware_version="1.0.0",
+    queue_directory="/honch",
+)
+
+client.identify("user-123", {"plan": "beta"})
+client.session_start("recording")
+client.track("recording_started", {"mode": "hdr"})
+client.session_end()
+client.flush()
+client.shutdown()
+```
+
+## Public API
+
+```python
+client.track(event_name, properties=None)
+client.identify(distinct_id, traits=None)
+client.set_property(key, value=None)
+client.session_start(session_name=None)
+client.session_end()
+client.connectivity_changed(connected)
+client.connected()
+client.disconnected()
+client.flush()
+client.reset()
+client.shutdown()
+client.get_device_id()
+```
+
+`properties` and `traits` must be dictionaries containing JSON-compatible values. `set_property` accepts one JSON-compatible value. The wrapper validates event names, distinct IDs, property dictionaries, and JSON value types before calling `_honch_core`.
+
+## Connectivity Events
+
+The wrapper exposes connectivity methods because MicroPython boards vary widely:
+
+```python
+client.connected()
+client.disconnected()
+client.connectivity_changed(True)
+client.connectivity_changed(False)
+```
+
+The wrapper suppresses duplicate connectivity states and queues `$connectivity_change` only when the state changes.
+
+## Errors
+
+The wrapper maps `_honch_core` runtime statuses into Python exceptions:
+
+| Exception | Meaning |
+| --- | --- |
+| `InvalidArgumentError` | Bad config, event name, identity, properties, or JSON value. |
+| `StorageError` | Storage I/O or queue-full condition. |
+| `TransportError` | Transport or timeout failure. |
+| `RateLimitedError` | Capture rate limit. |
+| `ServerError` | Capture server error. |
+| `RejectedError` | Permanent capture rejection. |
+| `NotInitializedError` | Client missing or already shut down. |
+| `HonchError` | Generic SDK error. |
+
+`CompressionUnavailableError` exists in the public wrapper exports for compatibility, but the current compact chunk path does not expose a compression feature.
+
+## Storage And Transport
+
+The user module stores files below `queue_directory`:
+
+```text
+/honch/
+  pending/
+  dead/
+  state/
+    device_id
+    distinct_id
+    firmware_version
+```
+
+Queue entries are `.cbor` files before compact upload encoding. The transport imports `urequests` and posts compact chunks to:
+
+```text
+POST <endpoint_url>/capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <api_key>
+X-Honch-Stream-Id: <stream_id>
+```
+
+Retry and dead-letter decisions come from the shared C core.
+
+## Examples
+
+- `examples/basic.py` tracks identity, a session, a custom event, flush, and shutdown.
+- `examples/persistent_queue.py` queues an event before network delivery and tolerates retryable flush errors.
+- `examples/pico_w_main.py` is an E2E-style Pico W script with Wi-Fi, identity, sessions, nested properties, reserved-property conflict checks, and flush.
+
+## Verify
+
+Host tests validate the wrapper and user-module source shape:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=ports/micropython python3 -m unittest discover \
+  -s ports/micropython/tests -t . -v
+```
+
+Runtime validation requires a MicroPython interpreter or board firmware built with `_honch_core`.

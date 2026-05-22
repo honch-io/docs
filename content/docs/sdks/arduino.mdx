@@ -1,0 +1,140 @@
+---
+title: Arduino ESP32
+description: Use the in-progress Honch Arduino ESP32 wrapper around the shared C core.
+---
+
+The Arduino ESP32 SDK is a C++ wrapper around the shared C core. It targets ESP32 boards using the Arduino framework and exposes a singleton-style `Honch` API.
+
+Status: in progress, library version `0.1.0`. The milestone has host wrapper tests and example compile support, but it has not yet been fully signed off with end-to-end ESP32 hardware validation.
+
+## Support
+
+| Area | Current support |
+| --- | --- |
+| Board family | ESP32 Arduino only. |
+| Dependencies | ESP32 Arduino core, `WiFi`, `Preferences`, `HTTPClient`. |
+| Upload path | Compact chunk frames to `POST /capture`. |
+| Storage | ESP32 `Preferences` for state and queued events. |
+| TLS | Application-owned; `insecureSkipTlsVerify` exists for local testing only. |
+| Relay, OTA, non-ESP32 boards | Not included in this milestone. |
+
+## Configure
+
+```cpp
+struct HonchConfig {
+  const char *apiKey;
+  const char *host;
+  const char *deviceModel;
+  const char *firmwareVersion;
+  const char *environment;
+  uint8_t *eventBuffer;
+  size_t eventBufferSize;
+  uint32_t flushIntervalSeconds;
+  uint32_t flushEventThreshold;
+  bool insecureSkipTlsVerify;
+};
+```
+
+`eventBufferSize` is passed to the core as `max_event_bytes`. The current Arduino storage path stores state and queue entries through `Preferences`; the public buffer remains part of the milestone API surface.
+
+## Basic Use
+
+```cpp
+#include <WiFi.h>
+#include <Honch.h>
+
+static const char *WIFI_SSID = "ssid";
+static const char *WIFI_PASSWORD = "password";
+static const char *HONCH_PROJECT_KEY = "project-key";
+
+static uint8_t eventBuffer[8192];
+
+void setup() {
+  Serial.begin(115200);
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+  }
+
+  HonchConfig config = {};
+  config.apiKey = HONCH_PROJECT_KEY;
+  config.host = "https://capture.honch.io";
+  config.deviceModel = "esp32-devkit";
+  config.firmwareVersion = "1.0.0";
+  config.environment = "production";
+  config.eventBuffer = eventBuffer;
+  config.eventBufferSize = sizeof(eventBuffer);
+  config.flushIntervalSeconds = 60;
+  config.flushEventThreshold = 30;
+  config.insecureSkipTlsVerify = false;
+
+  if (Honch.begin(config)) {
+    Honch.track("boot", "{}");
+    Honch.flush();
+  }
+}
+
+void loop() {}
+```
+
+## Public API
+
+```cpp
+bool Honch.begin(const HonchConfig &config);
+bool Honch.track(const char *eventName, const char *propertiesJson = "{}");
+bool Honch.identify(const char *distinctId, const char *traitsJson = "{}");
+bool Honch.setProperty(const char *key, const char *valueJson);
+bool Honch.sessionStart(const char *sessionName);
+bool Honch.sessionEnd();
+bool Honch.flush();
+bool Honch.shutdown();
+bool Honch.reset();
+const char *Honch.deviceId();
+const char *Honch.lastError();
+```
+
+The wrapper returns `bool` and stores the last shared-core status. Use `Honch.lastError()` to get the status string.
+
+## Behavior
+
+- SDK platform is `arduino-esp32`.
+- Device ID is derived from the ESP32 eFuse MAC as `esp32-<12 uppercase hex chars>` when running on Arduino, then passed to the core as configured identity.
+- Background flush is disabled in the current wrapper; call `Honch.flush()` explicitly.
+- The queue is capped at 256 entries in the Arduino `Preferences` adapter.
+- `Honch.track`, `Honch.identify`, and `Honch.setProperty` use JSON strings for properties and values.
+- `Honch.shutdown()` queues `$device_shutdown`, attempts a final flush, and releases the core client.
+
+## Transport
+
+The transport appends `/capture` to `host` and sends:
+
+```text
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <apiKey>
+X-Honch-Stream-Id: <stream_id>
+```
+
+HTTPS uses `WiFiClientSecure`. Set `insecureSkipTlsVerify` only for local testing where certificate verification is intentionally disabled.
+
+## Examples
+
+- `examples/HonchBasic/HonchBasic.ino` connects to Wi-Fi, initializes Honch, tracks `boot`, and flushes.
+- `examples/HonchOfflineQueue/HonchOfflineQueue.ino` queues before Wi-Fi, then connects and flushes.
+
+Compile examples with Arduino CLI:
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32 ports/arduino/examples/HonchBasic
+arduino-cli compile --fqbn esp32:esp32:esp32 ports/arduino/examples/HonchOfflineQueue
+```
+
+## Verify
+
+From the SDK root:
+
+```bash
+ports/arduino/scripts/verify-arduino.sh
+```
+
+The script always runs the host wrapper test. If `arduino-cli` is installed, it also compiles the ESP32 examples; otherwise the compile checks are skipped.

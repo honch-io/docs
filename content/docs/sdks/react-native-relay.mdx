@@ -1,0 +1,189 @@
+---
+title: React Native Relay
+description: Receive relay chunks from offline devices, store them durably, and upload compact messages from a mobile app.
+---
+
+React Native Relay is not a device analytics SDK. It is a companion-app relay package for devices that cannot upload directly to Capture. Firmware sends relay chunks over BLE; the mobile app validates and reassembles them, stores completed compact messages durably, ACKs the device, and uploads the message to Honch Capture.
+
+Status: in progress, package version `0.1.0`, private package in the SDK repository.
+
+## Production Contract
+
+Firmware uses the relay chunk frame from the shared spec:
+
+| Field | Meaning |
+| --- | --- |
+| version | `1`. |
+| source type | `1` for events. |
+| flags | first/final bits. |
+| sequence | big-endian message sequence. |
+| offset | big-endian payload offset. |
+| payload length | big-endian payload byte count. |
+| CRC16 | CRC over the relay header without CRC plus payload. |
+| payload | compact message bytes from the firmware queue. |
+
+The relay validates frame version, reserved byte, payload length, CRC16, source type consistency, offsets, duplicate chunks, and completion before ACKing the device.
+
+## BLE UUIDs
+
+These UUIDs are reserved until product-assigned UUIDs are finalized:
+
+```text
+Service: 484f4e43-482d-5245-4c41-592d53445631
+Frame Notify Characteristic: 484f4e43-482d-5245-4c41-592d4652414d
+ACK Write Characteristic: 484f4e43-482d-5245-4c41-592d41434b31
+```
+
+Native bridges emit frame notifications as:
+
+```text
+HonchRelayFrame
+{
+  deviceId: "<native peripheral id>",
+  frameBase64: "<relay frame bytes>"
+}
+```
+
+## Install And Build
+
+From `ports/react-native-relay`:
+
+```bash
+bun install
+bun run typecheck
+bun run test
+```
+
+Native checks:
+
+```bash
+bun run verify:ios:native
+bun run verify:android:native
+```
+
+`verify:ios:native` syntax-checks the Objective-C bridge against the iPhoneOS SDK. `verify:android:native` builds the Android library when an Android SDK path is configured.
+
+## Durable Storage
+
+Use MMKV in production:
+
+```ts
+import { createMMKV } from "react-native-mmkv";
+import { createMmkvRelayStore } from "@honch/react-native-relay";
+
+const durableStore = createMmkvRelayStore(createMMKV({ id: "honch-relay" }));
+```
+
+The MMKV adapter stores relay state under `honch.relay.queue.v1`. It keeps incomplete chunk assemblies and completed messages until Capture accepts them or the relay permanently drops them.
+
+For tests and local harnesses, use `createMemoryDurableStore` or `createJsonFileRelayStore`.
+
+## Wire The Relay
+
+```ts
+import { NativeEventEmitter, NativeModules } from "react-native";
+import {
+  createMobileRelay,
+  createRelayNativeBindings,
+  createMmkvRelayStore,
+} from "@honch/react-native-relay";
+import { createMMKV } from "react-native-mmkv";
+
+const nativeModule = NativeModules.HonchReactNativeRelay;
+const bindings = createRelayNativeBindings(nativeModule);
+
+const relay = createMobileRelay({
+  durableStore: createMmkvRelayStore(createMMKV({ id: "honch-relay" })),
+  uploaderConfig: {
+    endpointUrl: "https://capture.honch.io",
+    projectKey: "project-key",
+    relayId: "mobile-relay-1",
+    relaySdkPlatform: "react-native",
+    relaySdkVersion: "0.1.0",
+    streamId: (message) => `relay-${message.deviceId}`,
+    messageId: (message) => Number(message.sequence),
+  },
+  bleNative: bindings.bleNative,
+  schedulerNative: bindings.schedulerNative,
+  frameEvents: new NativeEventEmitter(nativeModule),
+});
+
+relay.subscribeNativeFrames();
+```
+
+## Public TypeScript Surface
+
+Important exports:
+
+```ts
+decodeRelayFrame(frameBytes)
+createInMemoryRelayQueue()
+createDurableRelayQueue(store)
+createMemoryDurableStore()
+createMmkvRelayStore(mmkv)
+createJsonFileRelayStore(path)
+buildRelayUploadBuffer(config, message)
+uploadRelayMessage(config, message)
+uploadRelayMessageOutcome(config, message)
+drainRelayQueue(options)
+nextBackoffDelayMs(attempt, random)
+createBleRelayReceiver(options)
+createRelayUploadScheduler(options)
+createMobileRelay(options)
+createRelayNativeBindings(nativeModule)
+subscribeRelayNativeFrames(source, onFrame)
+decodeRelayFrameEventPayload(frameBase64)
+```
+
+`createMobileRelay` combines durable queueing, native BLE, native upload scheduling, optional native frame events, and upload draining.
+
+## Upload Behavior
+
+Completed device messages are uploaded as canonical compact wire-v2 HTTP chunks:
+
+```text
+POST <endpointUrl>/capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <projectKey>
+X-Honch-Stream-Id: <streamId(message)>
+X-Honch-Relay-Id: <relayId>
+X-Honch-Relay-SDK-Platform: <relaySdkPlatform>
+X-Honch-Relay-SDK-Version: <relaySdkVersion>
+```
+
+The relay wraps the completed compact device message in the canonical HTTP chunk frame, but it does not rewrite the compact device message body.
+
+Upload outcomes:
+
+| Outcome | Queue action |
+| --- | --- |
+| Success response | Mark uploaded and remove queue state. |
+| `400`, `401`, `404` | Drop and remove queue state. |
+| Network error, `408`, `409`, `429`, `5xx`, other non-success | Keep pending and schedule retry. |
+
+Backoff starts at 1 second, caps at 5 minutes, and applies plus or minus 25% jitter.
+
+## Native Host Requirements
+
+iOS:
+
+- Add `NSBluetoothAlwaysUsageDescription`.
+- Enable `bluetooth-central` background mode if receipt should continue in the background.
+- Install through a React Native iOS host `Podfile`; the podspec links CoreBluetooth and BackgroundTasks.
+
+Android:
+
+- Request `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` at runtime on Android 12+.
+- Request `ACCESS_FINE_LOCATION` where required for BLE scanning.
+- Include `androidx.work:work-runtime` for scheduled upload drains.
+- Register the package through the consuming React Native Android host.
+
+The package directory does not contain a complete iOS or Android host app. Production sign-off requires validation inside the consuming app.
+
+## E2E Harness
+
+```bash
+bun run e2e:capture
+```
+
+The harness wraps a compact wire-v2 fixture in relay frames, feeds frames through `createMobileRelay().receiveFrame()`, verifies offline retry preservation, drains to Capture when configured, rejects malformed frames without ACK, and can verify ClickHouse rows in a live local stack.

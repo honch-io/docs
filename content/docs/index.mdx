@@ -1,46 +1,56 @@
 ---
-title: Introduction
-description: Product analytics for connected hardware. Understand how your devices behave in the real world.
+title: Honch SDKs
+description: Product analytics SDKs for firmware, embedded Linux, MicroPython, Arduino, and mobile relay flows.
 ---
 
-Honch is a product analytics platform built for connected hardware. It gives you visibility into how your devices behave in the field: boot cycles, firmware updates, connectivity, battery health, and any custom events you care about.
+Honch SDKs collect product analytics from connected hardware. They run inside firmware, embedded Linux software, MicroPython firmware, Arduino ESP32 sketches, or a mobile relay app, then queue device events locally and upload compact binary chunks to Honch Capture.
 
-The Honch SDK runs directly on your device as part of your firmware. It collects events locally and sends them to the configured Honch capture endpoint in efficient batches. Use the HTTPS Honch endpoint in production. Events are queued on-device while connectivity is down, then sent once the network is available again.
+## Current SDKs
 
-## How Does It Work?
+| SDK | Status | Use it for |
+| --- | --- | --- |
+| ESP-IDF | Available, component version `0.1.0` | ESP32-family products built with ESP-IDF. |
+| C/POSIX | Available, core-derived `0.2.0` | Embedded Linux devices, local development harnesses, and C core validation. |
+| MicroPython | Available, core-derived `0.2.0` | Firmware that can include the `_honch_core` MicroPython user C module. |
+| Arduino ESP32 | In progress, library version `0.1.0` | ESP32 Arduino sketches that can tolerate the current milestone limitations. |
+| React Native Relay | In progress, package version `0.1.0` | Companion apps that receive relay chunks from offline devices and upload them later. |
 
-1. **Integrate the SDK** into your firmware project. The SDK ships as a platform-specific component (e.g., an ESP-IDF component for ESP32) that compiles alongside your application code. There are no external dependencies to install at runtime.
-2. **Initialize with your API key** and basic device info (model name, firmware version). The API key authenticates your device with Honch. The model name and firmware version let you filter and compare devices in the dashboard. Once initialized, the SDK begins collecting lifecycle events automatically, no extra code needed.
-3. **Track custom events** for anything specific to your product: button presses, sensor readings, user interactions, configuration changes. Each event has a name and optional key-value properties.
-4. **Events are batched and sent** to the Honch capture endpoint. The SDK encodes events as CBOR (a compact binary format) and sends them in batches of up to 50 to the endpoint configured in `host`. If the device is offline, events queue locally and are flushed when connectivity returns. Retryable failures are retried automatically with exponential backoff.
-5. **View your data** in the Honch dashboard to understand device behavior, track firmware rollouts, identify crash patterns, and debug field issues.
+The portable C core is the source of truth for shared behavior: event semantics, identity, lifecycle events, queue policy, retry classification, compact wire-v2 encoding, and packetization. Platform ports provide storage, transport, timing, randomness, and platform-specific adapters.
 
-## What Gets Collected Automatically?
+## What Every SDK Sends
 
-Every event the SDK sends includes auto-stamped properties: device ID (derived from the hardware MAC address), firmware version, SDK platform, and environment tag. These are added by the SDK encoder so you don't need to include them manually.
+Each event has an event name, a timestamp, a `distinct_id`, and properties. SDK-owned properties such as `$device_id`, `$device_model`, `$firmware_version`, `$sdk_platform`, `$sdk_version`, and `$environment` are added automatically and win over user-supplied values with the same keys.
 
-The SDK also emits lifecycle events without any extra code on your part:
+SDKs also emit lifecycle events where the platform supports them:
 
-- **Device boot**, logged on every initialization, with the reset reason (power-on, software reset, crash/panic, watchdog timeout, deep sleep wake, or brownout). This lets you monitor reboot frequency and identify crash-prone devices.
-- **Firmware updates**. The SDK stores the firmware version between boots. When the version changes, it emits an event with both the old and new versions so you can track rollout progress across your fleet.
-- **Connectivity changes**, emitted when Wi-Fi connects or disconnects, so you can correlate network stability with device behavior.
-- **Battery low**, emitted when battery is below a configurable threshold (default 15%). Only fires once while below the threshold, not repeatedly, so it won't flood your data.
-- **Sessions**. You control these by calling `honch_session_start()` and `honch_session_end()`. All events between those calls share a session ID, making it easy to analyze user flows or operational sequences.
+- `$device_boot`
+- `$device_shutdown`
+- `$firmware_update`
+- `$battery_low`
+- `$session_start`
+- `$session_end`
+- `$connectivity_change`
 
-## Supported Platforms
+## Upload Contract
 
-| Platform | Language | Status |
-|----------|----------|--------|
-| ESP-IDF  | C        | Available |
-| C/POSIX  | C        | Foundation available |
-| MicroPython | Python | Initial implementation available |
+SDKs upload one compact chunk frame at a time:
 
-Support for additional platforms is on the roadmap.
+```text
+POST /capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <project_api_key>
+X-Honch-Stream-Id: <stream_id>
+```
 
-## Getting Started
+Capture also accepts the same compact chunk format on `/e` and `/chunks`. Use the hosted HTTPS capture endpoint in production; local development endpoints can use HTTP when intentionally configured.
+
+## Start Here
 
 <Cards>
-  <Card title="Quickstart" href="/docs/quickstart" description="Get events flowing from your device in minutes." />
-  <Card title="ESP-IDF Integration" href="/docs/sdks/esp-idf" description="Full integration guide for ESP32 devices." />
-  <Card title="FAQ" href="/docs/faq" description="Common questions and troubleshooting." />
+  <Card title="Quickstart" href="/quickstart" description="Choose the right SDK and send your first event." />
+  <Card title="Shared Concepts" href="/concepts" description="Event model, identity, queues, retries, wire format, and relay behavior." />
+  <Card title="ESP-IDF" href="/sdks/esp-idf" description="Production ESP32 integration with ESP-IDF." />
+  <Card title="C/POSIX" href="/sdks/c-posix" description="Portable C SDK for embedded Linux and local harnesses." />
+  <Card title="MicroPython" href="/sdks/micropython" description="MicroPython wrapper backed by the C core user module." />
+  <Card title="React Native Relay" href="/sdks/react-native-relay" description="Mobile relay package for BLE/offline devices." />
 </Cards>
