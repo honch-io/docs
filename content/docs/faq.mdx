@@ -114,7 +114,7 @@ Durability varies by SDK:
 
 | SDK | Offline storage |
 | --- | --- |
-| ESP-IDF | RAM-first queue with NVS overflow/dead-letter handling. RAM-resident events can be lost on reset. |
+| ESP-IDF | RAM-first queue with NVS overflow. Permanent capture rejections are consumed rather than written to NVS dead-letter storage. RAM-resident events can be lost on reset. |
 | C/POSIX | File-backed queue under `queue_directory`. |
 | MicroPython | File-backed queue under `queue_directory`. |
 | Arduino ESP32 | ESP32 `Preferences` queue. |

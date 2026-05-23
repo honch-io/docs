@@ -214,7 +214,7 @@ If events queue but do not upload, verify Wi-Fi, time/TLS setup, capture host, a
 
 The default public init path uses a RAM-first queue. `event_buffer` stores RAM queue entries up to 64 events and the available buffer size. When the RAM path cannot accept another event or NVS-backed events already exist, the SDK uses NVS queue storage.
 
-Tradeoff: RAM-resident events are fast but can be lost on reset or power loss. NVS stores identity, firmware version, overflow events, and dead-lettered events.
+Tradeoff: RAM-resident events are fast but can be lost on reset or power loss. NVS stores identity, firmware version, and overflow events. Permanent capture rejections are consumed instead of being written to an unused dead-letter namespace.
 
 ## Transport Contract
 

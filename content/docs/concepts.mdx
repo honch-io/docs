@@ -75,7 +75,7 @@ Durability depends on the port:
 
 | SDK | Storage behavior |
 | --- | --- |
-| ESP-IDF | RAM-first queue backed by a caller-provided buffer, with NVS used for overflow and dead-letter handling. RAM-resident events can be lost on reset or power loss. |
+| ESP-IDF | RAM-first queue backed by a caller-provided buffer, with NVS used for overflow. Permanent capture rejections are consumed rather than written to NVS dead-letter storage. RAM-resident events can be lost on reset or power loss. |
 | C/POSIX | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory`; default durability fsyncs queued events. |
 | MicroPython | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory` through the user C module. |
 | Arduino ESP32 | Preferences-backed state and queue. |
