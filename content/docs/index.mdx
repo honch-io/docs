@@ -1,44 +1,81 @@
 ---
-title: Introduction
-description: Product analytics for connected hardware. Understand how your devices behave in the real world.
+title: Honch SDKs
+description: Product analytics SDKs for firmware, embedded Linux, MicroPython, Arduino, and mobile relay flows.
 ---
 
-Honch is a product analytics platform built for connected hardware. It gives you visibility into how your devices behave in the field: boot cycles, firmware updates, connectivity, battery health, and any custom events you care about.
+Honch SDKs collect product analytics from connected hardware. They run inside firmware, embedded Linux software, MicroPython firmware, Arduino ESP32 sketches, or a mobile relay app, then queue events locally and upload compact binary chunks to Honch Capture.
 
-The Honch SDK runs directly on your device as part of your firmware. It collects events locally and sends them to the Honch platform in efficient batches over HTTPS. Events are queued on-device, so nothing is lost when connectivity drops. They're sent once the network is available again.
+## Start With The Integration Path
 
-## How Does It Work?
+If you are setting up Honch for the first time, read these in order:
 
-1. **Integrate the SDK** into your firmware project. The SDK ships as a platform-specific component (e.g., an ESP-IDF component for ESP32) that compiles alongside your application code. There are no external dependencies to install at runtime.
-2. **Initialize with your API key** and basic device info (model name, firmware version). The API key authenticates your device with Honch. The model name and firmware version let you filter and compare devices in the dashboard. Once initialized, the SDK begins collecting lifecycle events automatically, no extra code needed.
-3. **Track custom events** for anything specific to your product: button presses, sensor readings, user interactions, configuration changes. Each event has a name and optional key-value properties.
-4. **Events are batched and sent** to the Honch capture endpoint. The SDK encodes events as CBOR (a compact binary format) and sends them in batches of up to 50 over HTTPS. If the device is offline, events queue locally and are flushed when connectivity returns. Failed sends are retried automatically with exponential backoff.
-5. **View your data** in the Honch dashboard to understand device behavior, track firmware rollouts, identify crash patterns, and debug field issues.
+1. [Quickstart](/quickstart): choose the right SDK, send one event, and verify the first delivery path.
+2. Your SDK guide: follow the install, configure, first event, verify, and troubleshoot steps for your target.
+3. [Shared Concepts](/concepts): understand identity, queueing, retries, lifecycle events, and compact upload behavior.
+4. [FAQ](/faq): use the failure-mode answers when events do not show up or queues behave unexpectedly.
 
-## What Gets Collected Automatically?
+Do not start by adding every product event. First prove that one event can queue and either upload or remain pending for the expected reason.
 
-Every event the SDK sends includes auto-stamped properties: device ID (derived from the hardware MAC address), firmware version, SDK platform, and environment tag. These are added by the SDK encoder so you don't need to include them manually.
+## Choose The SDK
 
-The SDK also emits lifecycle events without any extra code on your part:
+| SDK | Status | Use it for | Guide |
+| --- | --- | --- | --- |
+| ESP-IDF | Available, component version `0.1.0` | ESP32-family products built with ESP-IDF. | [ESP-IDF](/sdks/esp-idf) |
+| C/POSIX | Available, Shared Core behavior `0.2.0` | Embedded Linux devices, local development harnesses, and visible queue inspection. | [C/POSIX](/sdks/c-posix) |
+| MicroPython | Available, Shared Core behavior `0.2.0` | Firmware that can include the `_honch_core` MicroPython user C module. | [MicroPython](/sdks/micropython) |
+| Arduino ESP32 | In progress, library version `0.1.0` | ESP32 Arduino sketches using the current wrapper and explicit flush calls. | [Arduino ESP32](/sdks/arduino) |
+| React Native Relay | In progress, package version `0.1.0` | Companion apps that receive relay chunks from offline devices and upload them later. | [React Native Relay](/sdks/react-native-relay) |
 
-- **Device boot**, logged on every initialization, with the reset reason (power-on, software reset, crash/panic, watchdog timeout, deep sleep wake, or brownout). This lets you monitor reboot frequency and identify crash-prone devices.
-- **Firmware updates**. The SDK stores the firmware version between boots. When the version changes, it emits an event with both the old and new versions so you can track rollout progress across your fleet.
-- **Connectivity changes**, emitted when Wi-Fi connects or disconnects, so you can correlate network stability with device behavior.
-- **Battery low**, emitted when battery drops below a configurable threshold (default 15%). Only fires once per crossing, not repeatedly, so it won't flood your data.
-- **Sessions**. You control these by calling `session_start()` and `session_end()`. All events between those calls share a session ID, making it easy to analyze user flows or operational sequences.
+Shared Core is the source of truth for common SDK behavior: event semantics, identity, lifecycle events, queue policy, retry classification, compact upload encoding, and relay packetization. Platform ports provide storage, transport, timing, randomness, and platform-specific integration.
 
-## Supported Platforms
+## What You Should Verify First
 
-| Platform | Language | Status |
-|----------|----------|--------|
-| ESP-IDF  | C        | Available |
+For every SDK, the first useful checkpoint is the same:
 
-Support for additional platforms is on the roadmap.
+| Step | Proof |
+| --- | --- |
+| SDK initializes | Init returns success or does not raise. |
+| Identity exists | Device ID is generated, configured, or persisted. |
+| Event queues | A first event is accepted locally. |
+| Flush runs | Transport attempts `POST /capture`. |
+| Failure is understood | Retryable failures stay pending; permanent rejections drop or dead-letter. |
 
-## Getting Started
+Once those are true, add product events, identity, sessions, battery, connectivity, GPIO, or relay flows.
+
+## What Every SDK Sends
+
+Each event has an event name, a timestamp, a `distinct_id`, and properties. SDK-owned properties such as `$device_id`, `$device_model`, `$firmware_version`, `$sdk_platform`, `$sdk_version`, and `$environment` are added automatically and win over user-supplied values with the same keys.
+
+SDKs also emit lifecycle events where the platform supports them:
+
+- `$device_boot`
+- `$device_shutdown`
+- `$firmware_update`
+- `$battery_low`
+- `$session_start`
+- `$session_end`
+- `$connectivity_change`
+
+## Upload Contract
+
+SDKs upload compact chunk frames:
+
+```text
+POST /capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <project_api_key>
+X-Honch-Stream-Id: <stream_id>
+```
+
+Capture also accepts the same compact chunk format on `/e` and `/chunks`. Use the hosted HTTPS capture endpoint in production; local development endpoints can use HTTP when intentionally configured.
+
+## Common Starting Points
 
 <Cards>
-  <Card title="Quickstart" href="/docs/quickstart" description="Get events flowing from your device in minutes." />
-  <Card title="ESP-IDF Integration" href="/docs/sdks/esp-idf" description="Full integration guide for ESP32 devices." />
-  <Card title="FAQ" href="/docs/faq" description="Common questions and troubleshooting." />
+  <Card title="Quickstart" href="/quickstart" description="Send and verify the first event for each SDK path." />
+  <Card title="ESP-IDF" href="/sdks/esp-idf" description="Install the ESP-IDF component, initialize NVS, track events, and verify hardware logs." />
+  <Card title="C/POSIX" href="/sdks/c-posix" description="Build locally, inspect queue files, and confirm capture uploads." />
+  <Card title="MicroPython" href="/sdks/micropython" description="Build firmware with _honch_core and validate the Python wrapper." />
+  <Card title="Arduino ESP32" href="/sdks/arduino" description="Use the in-progress Arduino wrapper with explicit flushes." />
+  <Card title="FAQ" href="/faq" description="Troubleshoot queue, auth, transport, identity, and relay failures." />
 </Cards>

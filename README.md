@@ -1,45 +1,27 @@
-# docs
+# Honch Docs
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+This is the Honch documentation site. It is a Next.js app using Fumadocs MDX.
 
-Run development server:
+## Commands
 
 ```bash
 npm run dev
-# or
-pnpm dev
-# or
-yarn dev
+npm run types:check
+npm run lint
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+`npm run dev` starts the local development server. By default, Next.js serves the site at `http://localhost:3000`.
 
-## Explore
+`npm run types:check` regenerates Fumadocs/Next.js generated files and runs TypeScript with `tsc --noEmit`.
 
-In the project, you can see:
+`npm run lint` runs Biome. At the time of the source audit, this command reports existing Biome/Tailwind/import-format diagnostics that are separate from the SDK docs content.
 
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
+## Content
 
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
+User-facing docs live in `content/docs`. The current docs cover the SDK
+overview, quickstart, shared SDK concepts, FAQ, shared C core, ESP-IDF,
+C/POSIX, MicroPython, Arduino ESP32, and React Native Relay.
 
-### Fumadocs MDX
+The docs source is configured in `source.config.ts` and loaded by `src/lib/source.ts`.
 
-A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
-
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
-
-## Learn More
-
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.dev) - learn about Fumadocs
+The SDK accuracy audit lives in `DOCS_SOURCE_AUDIT.md`.
