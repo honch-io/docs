@@ -1,37 +1,37 @@
 ---
 title: Shared Concepts
-description: The event model, identity, local queues, retries, upload behavior, and relay behavior shared by Honch SDKs.
+description: Event model, identity, queues, retries, lifecycle events, and relay behavior shared by Honch SDKs.
 ---
 
-The official SDKs share one contract even when each port integrates with a different platform. Shared Core implements the canonical behavior for event semantics, identity, lifecycle events, queue policy, compact upload encoding, and relay packetization.
+Honch SDKs share one product contract across different platforms. Platform SDKs adapt that behavior to local storage, transport, time, TLS, Wi-Fi, BLE, and board constraints.
 
 ## Event Model
 
-Each event contains:
+Each event has:
 
 | Field | Meaning |
 | --- | --- |
-| `event` | Event name, up to 128 characters in the Shared Core SDKs. |
-| `distinct_id` | The analytics identity attached to the event. Defaults to the device ID. |
-| `timestamp` | Assigned when the SDK tracks the event. |
-| `properties` | Typed custom properties plus SDK-owned automatic context expanded by Capture. |
+| `event` | Stable event name. Shared Core SDKs limit names to 128 characters. |
+| `distinct_id` | Analytics identity. Defaults to the device ID until you call identify. |
+| `timestamp` | Device event time assigned when the event is tracked. |
+| `properties` | Typed custom properties plus SDK-owned context. |
 
-Public event APIs accept typed values. C-derived ports use `honch_property_t` with helpers such as `honch_str`, `honch_i64`, `honch_bool`, arrays, and maps. MicroPython accepts dictionaries containing typed values such as `None`, `bool`, `int`, `float`, `str`, `bytes`, lists, and dictionaries with string keys. SDK-owned property keys supplied by users are rejected before queueing so application input cannot spoof SDK context.
+C-derived SDKs use typed `honch_property_t` values. MicroPython accepts dictionaries containing supported typed values. User-supplied SDK-owned keys are rejected before queueing.
 
 ## Identity
 
-The SDK tracks two IDs:
+The SDK tracks:
 
 | ID | Purpose |
 | --- | --- |
-| `$device_id` | Stable hardware or generated device identity. Persisted by the SDK. |
-| `distinct_id` | Analytics identity. Starts as the device ID and changes when you call `identify`. |
+| `$device_id` | Stable device identity, generated, configured, or platform-derived. |
+| `distinct_id` | Analytics identity that can change after `identify`. |
 
-`reset` is a factory-reset-style boundary. It clears queued events, resets session state, resets low-battery state, and restores or rotates identity depending on whether the device ID was explicitly configured.
+Use `identify` for account, installation, or owner attribution. Use `reset` only for a factory-reset-style boundary; it clears queue and session state and restores or rotates identity depending on configuration.
 
 ## Automatic Properties
 
-Every event carries this SDK-owned context:
+Every event includes:
 
 | Property | When |
 | --- | --- |
@@ -39,13 +39,13 @@ Every event carries this SDK-owned context:
 | `$device_model` | Always, from SDK config. |
 | `$firmware_version` | Always, from SDK config. |
 | `$sdk_platform` | Always, from the port. |
-| `$sdk_version` | Always, from the shared SDK behavior version. |
+| `$sdk_version` | Always, from the SDK behavior version. |
 | `$environment` | Always, defaults to `production`. |
 | `$session_id` | Only while a session is active. |
-| `$battery_level` | Only when a battery callback is configured and returns `0`-`100`. |
+| `$battery_level` | Only when battery support is configured and returns `0`-`100`. |
 | `$wifi_rssi` | Only on embedded SDKs that can read Wi-Fi signal strength. |
 
-Promoted context properties are encoded once in the wire-v2 message context and stripped from each queued event's property set before wire encoding. Capture expands that context back into each event after decoding. The SDK explicitly does not stamp noisy values such as free heap, uptime, or hardware revision on every event.
+The SDK does not stamp noisy values such as free heap, uptime, or hardware revision on every event by default.
 
 ## Lifecycle Events
 
@@ -53,77 +53,40 @@ Promoted context properties are encoded once in the wire-v2 message context and 
 | --- | --- |
 | `$device_boot` | Queued during initialization. |
 | `$device_shutdown` | Queued during shutdown before the final flush attempt. |
-| `$firmware_update` | Queued during initialization when the stored firmware version differs from the configured one. |
-| `$battery_low` | Queued once when battery falls below the configured threshold; re-armed after recovery. |
+| `$firmware_update` | Queued during initialization when the stored firmware version changes. |
+| `$battery_low` | Queued once when battery falls below the configured threshold, then re-armed after recovery. |
 | `$session_start` | Queued by `session_start`. |
 | `$session_end` | Queued by `session_end` or before replacing an active session. |
-| `$connectivity_change` | Queued by SDKs that expose connectivity state, such as MicroPython's wrapper method or ESP connectivity support. |
+| `$connectivity_change` | Queued by SDKs that expose explicit connectivity helpers. |
 
-Embedded reset reasons use strings such as `power_on`, `software`, `panic`, `watchdog`, `deepsleep`, `brownout`, or `unknown` where the port can provide them.
+Embedded reset reasons use values such as `power_on`, `software`, `panic`, `watchdog`, `deepsleep`, `brownout`, or `unknown` where the port can provide them.
 
-## Queueing And Durability
+## Queueing And Persistence
 
-All SDKs queue before delivery. The queue contract is:
+All SDKs queue before delivery:
 
-- accepted events remain pending until Capture accepts them;
-- retryable failures keep events queued;
-- permanent rejections are dropped or moved to dead-letter storage;
-- queue length is bounded;
-- when the queue is full, the oldest event is dropped to admit newer data.
-
-Durability depends on the port:
+- accepted events stay pending until Capture accepts them;
+- retryable failures stay queued;
+- permanent rejections are dropped or dead-lettered according to port capability;
+- queues are bounded;
+- full queues drop oldest data to admit newer data where the port exposes shared queue policy.
 
 | SDK | Storage behavior |
 | --- | --- |
-| ESP-IDF | RAM-first queue backed by a caller-provided buffer, with NVS used for overflow. Permanent capture rejections are consumed rather than written to NVS dead-letter storage. RAM-resident events can be lost on reset or power loss. |
-| C/POSIX | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory`; default durability fsyncs queued events. |
-| MicroPython | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory` through the user C module. |
-| Arduino ESP32 | Canonical core queue through the Arduino wrapper, backed by caller-owned RAM and platform storage. |
-| React Native Relay | MMKV or custom durable store for completed relay messages and incomplete chunk assemblies. |
+| ESP-IDF | RAM-first queue with NVS overflow. RAM-resident events can be lost on reset or power loss. |
+| C/POSIX | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory`. |
+| MicroPython | File-backed queue under `queue_directory` through `_honch_core`. |
+| Arduino ESP32 | Caller-owned RAM buffer plus platform storage through the preview wrapper. |
+| React Native Relay | MMKV or custom durable mobile store for relay messages and assemblies. |
 
 ## Flushing And Retry
 
-The core does not start a hidden background thread. Call the cooperative tick API from your scheduler or firmware loop: `honch_tick()`, `Honch.tick()`, `Honch.loop()`, or `client.tick()` depending on the port. The Shared Core SDKs default to a 60 second flush interval, a 30 event flush threshold, batches of 20 events capped at 50, 1 second initial backoff, and 5 minute max backoff. Retry jitter is plus or minus 25%.
+The SDK does not hide upload work in an unmanaged background thread. Call the cooperative tick API from your loop or scheduler, or call flush explicitly when you want an immediate drain attempt.
 
-Response handling follows the shared upload policy:
-
-| Response | SDK behavior |
-| --- | --- |
-| `202` | Non-final chunk stored; send the next frame. |
-| `204` or other success accepted by a port | Confirm and remove the queued message. |
-| `400`, `413`, `415`, `422` | Drop or dead-letter malformed data. |
-| `401` | Treat as auth failure and stop retrying that message. |
-| `409`, `408`, `429`, `5xx`, network errors | Retry with backoff. |
-
-## Compact Upload Format
-
-SDKs store queued events as HQR1 typed event records, then encode wire-v2 compact event messages for upload. SDK transports send compact chunk frames:
-
-```text
-POST /capture
-Content-Type: application/vnd.honch.chunk
-X-Honch-Project-Key: <project_api_key>
-X-Honch-Stream-Id: <stream_id>
-```
-
-The project key is a transport credential, not part of the device message body. A single HTTP upload can contain a complete final frame; constrained links can split the same compact message into multiple frames.
-
-You do not need to construct the compact message by hand when using an SDK. Treat it as the SDK-owned upload payload; configure the endpoint and project key, then let the SDK handle encoding, chunking, retries, and validation responses.
-
-Event timestamps represent on-device event time from when `track` is called. If an event was queued while only boot-relative time was available, the SDK normalizes that timestamp once realtime becomes valid and marks the batch context with the device time source.
+Default retry behavior starts at 1 second, caps at 5 minutes, and applies plus or minus 25% jitter. Network failures, timeouts, `408`, `409`, `429`, and `5xx` responses are retryable. Authentication and malformed-data failures are not useful to retry unchanged.
 
 ## Relay Flow
 
-Relay is for devices that cannot upload directly. Firmware splits a queued compact message into relay chunks. A gateway or companion app:
+Relay is for devices that cannot upload directly. Firmware sends relay chunks to a gateway or companion app. The receiver validates and reassembles chunks, stores the complete message durably, ACKs the device, then uploads the message to Capture.
 
-1. validates relay frame version, payload length, checksum, and ordering;
-2. reassembles chunks by source device ID and sequence;
-3. stores the complete compact message durably;
-4. ACKs the firmware only after durable receipt;
-5. uploads the compact message to `/capture` with relay headers.
-
-React Native Relay implements this mobile relay side for iOS and Android hosts. It is a separate relay surface; it does not prove the direct SDK runtime on firmware or embedded Linux.
-
-## Integration Check
-
-When you integrate an SDK, verify the behavior that matters to your product: one event queues, flush attempts delivery, retryable failures stay pending, and permanent rejections are not retried forever.
+React Native Relay implements the mobile side of that flow for iOS and Android host apps. It does not replace the direct firmware SDKs for devices with normal HTTP connectivity.

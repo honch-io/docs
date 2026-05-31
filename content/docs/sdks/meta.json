@@ -1,7 +1,6 @@
 {
   "title": "SDKs",
   "pages": [
-    "shared-core",
     "esp-idf",
     "c-posix",
     "micropython",

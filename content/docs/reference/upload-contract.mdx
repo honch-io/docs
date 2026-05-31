@@ -1,0 +1,45 @@
+---
+title: Upload Contract
+description: The public Capture upload contract used by official Honch SDKs.
+---
+
+Official SDKs upload compact chunk frames to Honch Capture. Product applications normally do not build this payload directly; configure the SDK endpoint and project key, then let the SDK handle encoding, chunking, retry, and response classification.
+
+## Endpoint
+
+```text
+POST /capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <project_api_key>
+X-Honch-Stream-Id: <stream_id>
+```
+
+Use `https://capture.honch.io` for production. Local development may use HTTP only against an intentional local Capture service.
+
+## Response Handling
+
+| Response | SDK behavior |
+| --- | --- |
+| `202` | Non-final chunk accepted; continue sending the message. |
+| `204` or accepted success | Confirm delivery and remove the queued message. |
+| `400`, `413`, `415`, `422` | Drop or dead-letter malformed data according to port capability. |
+| `401` | Treat as authentication failure and stop retrying that message. |
+| `408`, `409`, `429`, `5xx`, network errors | Keep the message pending and retry with backoff. |
+
+Retry starts at 1 second, caps at 5 minutes, and applies plus or minus 25% jitter.
+
+## Relay Headers
+
+React Native Relay uploads completed device messages to the same endpoint and adds relay metadata:
+
+```text
+X-Honch-Relay-Id: <relay_id>
+X-Honch-Relay-SDK-Platform: react-native
+X-Honch-Relay-SDK-Version: <package_version>
+```
+
+The relay may re-chunk a completed device message for HTTP, but it must not rewrite the compact device message body.
+
+## Security Expectations
+
+The project key is a transport credential. Do not include project keys, relay credentials, secrets, or personally sensitive values in event properties. See [Security](/security) for TLS, key handling, and production endpoint guidance.

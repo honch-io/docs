@@ -1,0 +1,60 @@
+---
+title: Production Checklist
+description: Minimum checks before shipping a Honch SDK integration.
+---
+
+Use this checklist before moving a device or companion app from evaluation to production.
+
+## Required Checks
+
+| Check | Expected proof |
+| --- | --- |
+| SDK status reviewed | Stable or preview status is understood for the chosen SDK. |
+| Platform target recorded | Board, OS, toolchain, SDK version, and app version are documented. |
+| One event verified | A first event queues and uploads, or remains pending for a known retryable reason. |
+| Identity verified | Device ID and optional `distinct_id` behavior match product expectations. |
+| Flush path verified | Explicit flush or cooperative tick reaches `POST /capture`. |
+| Offline behavior verified | Retryable failures remain pending and later drain after recovery. |
+| Permanent failure verified | Bad key or malformed data does not retry forever. |
+| Persistence understood | Power loss, reset, app restart, or queue-directory behavior is documented for the target. |
+| TLS verified | Production endpoint uses HTTPS with certificate verification enabled. |
+| Secrets reviewed | Project keys and sensitive values are not logged or sent as properties. |
+| Troubleshooting path ready | Operators know how to inspect logs, queue state, and Capture responses. |
+
+## SDK-Specific Checks
+
+ESP-IDF:
+
+- initialize NVS before Honch;
+- configure Wi-Fi and time before expecting delivery;
+- decide whether RAM-first queue loss on reset is acceptable;
+- verify GPIO helper limits if using GPIO events.
+
+C/POSIX:
+
+- use one active client per queue directory;
+- choose durability mode deliberately;
+- verify libcurl can reach the production Capture endpoint;
+- inspect `pending/`, `dead/`, and `state/` during failure tests.
+
+MicroPython:
+
+- build firmware with `_honch_core`;
+- confirm both `import _honch_core` and `import honch`;
+- choose a queue directory that survives reboot on the board;
+- confirm memory headroom during flush.
+
+Arduino ESP32:
+
+- treat the SDK as preview;
+- configure `rootCaPem` for HTTPS;
+- call `Honch.tick()` or `Honch.loop()` from the sketch loop;
+- run product hardware validation before production.
+
+React Native Relay:
+
+- treat the SDK as preview;
+- validate native host builds on iOS and Android;
+- verify BLE scan, connect, notification, and ACK behavior on devices;
+- verify MMKV persistence across app restart;
+- verify accepted Capture responses remove queue state once.

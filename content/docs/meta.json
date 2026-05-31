@@ -4,10 +4,17 @@
     "---Getting Started---",
     "index",
     "quickstart",
+    "status",
     "concepts",
     "---SDKs---",
     "...sdks",
+    "---Production---",
+    "security",
+    "production-checklist",
+    "troubleshooting",
     "---Resources---",
-    "faq"
+    "faq",
+    "---Reference---",
+    "...reference"
   ]
 }

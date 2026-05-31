@@ -1,0 +1,45 @@
+---
+title: Shared Core
+description: Canonical SDK behavior shared by the Honch platform SDKs.
+---
+
+Shared Core is the portable behavior layer used by the direct-upload SDKs. Most product teams should start with an SDK guide, not this page. Use this reference when you need to understand why ESP-IDF, C/POSIX, MicroPython, and Arduino ESP32 behave consistently.
+
+## What It Owns
+
+Shared Core defines:
+
+- event names, typed properties, and reserved SDK-owned property keys;
+- identity, identify, sessions, reset, boot, shutdown, firmware-update, and battery-low behavior;
+- queue limits, drop-oldest behavior, retry classification, and backoff timing;
+- compact upload message construction for Capture;
+- packetization support for relay-capable firmware.
+
+Platform SDKs own the platform integration: storage, transport, time, randomness, locking, logging, Wi-Fi or BLE state, TLS setup, and board-specific behavior.
+
+## Shared Defaults
+
+| Setting | Default |
+| --- | --- |
+| Environment | `production` |
+| Batch size | `20`, capped at `50` |
+| Max queued events | `1000` where the port exposes this setting |
+| Max event bytes | `16384` where the port exposes this setting |
+| Flush interval | `60` seconds |
+| Flush event threshold | `30` events |
+| Initial retry backoff | `1` second |
+| Maximum retry backoff | `5` minutes |
+| Retry jitter | plus or minus 25% |
+| Battery-low threshold | `15` percent |
+
+The portable core does not start a hidden background thread for product applications. Call the tick API exposed by your SDK, or call flush explicitly when you want an immediate delivery attempt.
+
+## Event Time And Context
+
+Events use the device event time from the tracking call, not upload time. SDK-owned context such as `$device_id`, `$device_model`, `$firmware_version`, `$sdk_platform`, `$sdk_version`, `$environment`, and `$session_id` is represented once in the compact message context and expanded by Capture after decoding.
+
+SDK-owned property keys are reserved. User input that attempts to set keys such as `$device_id`, `$sdk_version`, `$environment`, `$session_id`, `$battery_level`, or `$wifi_rssi` is rejected before queueing.
+
+## Relay Support
+
+Shared Core can expose queued event data to relay-capable firmware. A relay receiver must acknowledge a device only after the complete message is validated and durably stored. React Native Relay implements the mobile side of that flow for companion apps.

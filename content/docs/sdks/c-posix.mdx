@@ -3,13 +3,11 @@ title: C/POSIX
 description: Build, configure, run, and verify the Honch C/POSIX SDK.
 ---
 
-The C/POSIX SDK is the easiest way to validate Honch behavior on a development machine or embedded Linux target. It uses Shared Core behavior with POSIX storage, libcurl transport, and file-backed queues.
+The C/POSIX SDK is the stable Honch integration path for embedded Linux targets, local development harnesses, and visible queue inspection. It uses shared SDK behavior with POSIX file storage and libcurl transport.
 
-Status: available, Shared Core behavior `0.2.0`.
+Status: Stable `0.2.0`.
 
-## Before You Start
-
-You need:
+## Requirements
 
 | Requirement | Notes |
 | --- | --- |
@@ -19,9 +17,7 @@ You need:
 | Queue directory | Writable by one active SDK client/process at a time. |
 | Project key | Sent as `X-Honch-Project-Key`. |
 
-Use C/POSIX first when you want to prove the event model, upload path, or retry behavior without flashing hardware.
-
-## 1. Build The SDK
+## Build
 
 From the SDK repository:
 
@@ -31,48 +27,11 @@ cmake -S . -B build -DHONCH_BUILD_EXAMPLES=ON
 cmake --build build
 ```
 
-Expected result: example binaries are available under `build/example`.
+Example binaries are written under `build/example`.
 
-Optional switches:
+## Configure
 
-| Switch | Purpose |
-| --- | --- |
-| `HONCH_BUILD_EXAMPLES` | Build example programs. |
-
-## 2. Configure A Client
-
-```c
-typedef struct honch_config {
-    const char *api_key;
-    const char *endpoint_url;
-    const char *device_id;
-    const char *device_model;
-    const char *firmware_version;
-    const char *environment;
-    const char *queue_directory;
-    size_t batch_size;
-    size_t max_queued_events;
-    size_t max_event_bytes;
-    unsigned int transport_timeout_ms;
-    unsigned int flush_interval_seconds;
-    size_t flush_event_threshold;
-    unsigned int flush_retry_initial_ms;
-    unsigned int flush_retry_max_ms;
-    int (*battery_callback)(void);
-    int battery_low_threshold;
-    honch_auto_properties_fn auto_properties_callback;
-    void *auto_properties_userdata;
-    honch_durability_mode_t durability_mode;
-} honch_config_t;
-```
-
-Required fields:
-
-- `api_key`
-- `endpoint_url`
-- `device_model`
-- `firmware_version`
-- `queue_directory`
+Required fields are `api_key`, `endpoint_url`, `device_model`, `firmware_version`, and `queue_directory`.
 
 Common defaults:
 
@@ -88,9 +47,9 @@ Common defaults:
 | `flush_event_threshold` | `30`. |
 | `durability_mode` | `HONCH_DURABILITY_SYNC_ALWAYS`. |
 
-There is no background flush thread in the portable core. Call `honch_tick()` periodically from your main loop or scheduler for bounded cooperative flush work, and call `honch_flush()` when you want an immediate drain attempt.
+There is no hidden background flush thread. Call `honch_tick()` from your loop or scheduler and call `honch_flush()` for an immediate drain attempt.
 
-## 3. Send A First Event
+## First Event
 
 ```c
 #include "honch/honch.h"
@@ -108,8 +67,7 @@ int main(void)
     };
 
     honch_client_t *client = NULL;
-    honch_status_t status = honch_init(&client, &config);
-    if (status != HONCH_OK) {
+    if (honch_init(&client, &config) != HONCH_OK) {
         return 1;
     }
 
@@ -117,21 +75,15 @@ int main(void)
         honch_prop("source", honch_str("posix")),
     };
     honch_track(client, "app_started", properties, 1);
-    honch_tick(client);
     honch_flush(client);
     honch_shutdown(client);
+    return 0;
 }
 ```
 
-Expected result:
+## Identity, Sessions, And Properties
 
-- `.honch-queue/state/device_id` is created;
-- `.honch-queue/state/distinct_id` is created;
-- retryable failures stay under `.honch-queue/pending`;
-- permanent rejections move attempted events to `.honch-queue/dead`;
-- accepted events are consumed from `pending`.
-
-## 4. Add Identity And Sessions
+Use typed `honch_property_t` arrays for event properties and identify traits. Event names must be nonblank and no longer than 128 characters. Distinct IDs must be nonblank and no longer than 256 characters.
 
 ```c
 const honch_property_t traits[] = {
@@ -140,29 +92,13 @@ const honch_property_t traits[] = {
 honch_identify(client, "account-123", traits, 1);
 
 honch_session_start(client, "recording");
-const honch_property_t properties[] = {
-    honch_prop("mode", honch_str("hdr")),
-};
-honch_track(client, "recording_started", properties, 1);
+honch_track(client, "recording_started", NULL, 0);
 honch_session_end(client);
 ```
 
-Expected result: events after `identify` use the new `distinct_id`, and events tracked during a session include `$session_id`.
+Invalid input returns `HONCH_ERROR_INVALID_ARGUMENT`. Strings and keys must be valid UTF-8, map keys must be unique, non-finite floats are rejected, and SDK-owned keys cannot be supplied by application code.
 
-## 5. Validate Typed Inputs
-
-Rules:
-
-- Event properties and identify traits use typed `honch_property_t` arrays.
-- `honch_set_property` accepts one typed `honch_value_t`.
-- Use helpers such as `honch_str`, `honch_i64`, `honch_u64`, `honch_bool`, `honch_f64`, `honch_array`, and `honch_map`.
-- SDK-owned keys such as `$device_id`, `$sdk_platform`, `$sdk_version`, and `$session_id` are rejected before queueing.
-- Event names must be nonblank and no longer than 128 characters.
-- Distinct IDs must be nonblank and no longer than 256 characters.
-
-Invalid input returns `HONCH_ERROR_INVALID_ARGUMENT`. The POSIX SDK fails closed instead of silently dropping malformed properties. Strings and keys must be valid UTF-8, map keys must be unique, and non-finite floats are rejected.
-
-## 6. Inspect Local Storage
+## Storage
 
 The queue directory layout is:
 
@@ -176,31 +112,15 @@ The queue directory layout is:
     firmware_version
 ```
 
-Durability modes:
+`HONCH_DURABILITY_SYNC_ALWAYS` writes event files with fsync for stronger crash safety. `HONCH_DURABILITY_OS_BUFFERED` keeps atomic rename behavior but skips per-event fsyncs for lower enqueue latency.
 
-| Mode | Behavior |
-| --- | --- |
-| `HONCH_DURABILITY_SYNC_ALWAYS` | Writes event files with fsync for stronger crash safety. |
-| `HONCH_DURABILITY_OS_BUFFERED` | Keeps atomic rename behavior but skips per-event fsyncs. |
+Use one active client per queue directory.
 
-When the queue is full, the oldest event is dropped to admit the newer event.
+## Security
 
-## 7. Confirm Transport
+Use HTTPS in production. Local HTTP is only for an intentional local Capture service. Keep project keys out of logs and event properties.
 
-The POSIX transport uses libcurl and sends compact chunks to:
-
-```text
-POST <endpoint_url>/capture
-Content-Type: application/vnd.honch.chunk
-X-Honch-Project-Key: <api_key>
-X-Honch-Stream-Id: <stream_id>
-```
-
-Use HTTPS in production. Local development can use HTTP only when you intentionally point the endpoint at a local Capture service.
-
-Queued events are stored as HQR1 typed event records. Flush encodes wire-v2 compact event messages, strips promoted context properties from each event, and sends chunk frames to Capture. Event timestamps represent the on-device event time recorded when `honch_track` was called; boot-relative timestamps are normalized once realtime is available.
-
-## 8. Run Examples
+## Verify
 
 ```bash
 ./build/example/posix_device/honch_posix_example
@@ -208,7 +128,7 @@ Queued events are stored as HQR1 typed event records. Flush encodes wire-v2 comp
 ./build/example/posix_gpio/honch_posix_gpio_example
 ```
 
-GPIO tracking is not part of Shared Core. Use a platform integration like `example/posix_gpio` to debounce platform signals and call `honch_track` from normal process context.
+Inspect `pending/`, `dead/`, and `state/` under your queue directory to confirm local behavior.
 
 ## Troubleshooting
 

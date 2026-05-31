@@ -1,81 +1,54 @@
 ---
 title: Honch SDKs
-description: Product analytics SDKs for firmware, embedded Linux, MicroPython, Arduino, and mobile relay flows.
+description: Product analytics SDKs for connected hardware, embedded Linux, MicroPython, Arduino ESP32, and mobile relay flows.
 ---
 
-Honch SDKs collect product analytics from connected hardware. They run inside firmware, embedded Linux software, MicroPython firmware, Arduino ESP32 sketches, or a mobile relay app, then queue events locally and upload compact binary chunks to Honch Capture.
+Honch SDKs collect product analytics from connected hardware. They run in firmware, embedded Linux processes, MicroPython firmware, ESP32 Arduino sketches, or a companion mobile relay app. SDKs queue events locally, preserve retryable failures, and upload compact messages to Honch Capture.
 
-## Start With The Integration Path
+## Start Here
 
-If you are setting up Honch for the first time, read these in order:
+1. Read [Quickstart](/quickstart) to choose an SDK and send one event.
+2. Check [SDK Status](/status) for stability, platform support, and verification evidence.
+3. Follow the SDK guide for your target.
+4. Use [Security](/security), [Production Checklist](/production-checklist), and [Troubleshooting](/troubleshooting) before shipping.
 
-1. [Quickstart](/quickstart): choose the right SDK, send one event, and verify the first delivery path.
-2. Your SDK guide: follow the install, configure, first event, verify, and troubleshoot steps for your target.
-3. [Shared Concepts](/concepts): understand identity, queueing, retries, lifecycle events, and compact upload behavior.
-4. [FAQ](/faq): use the failure-mode answers when events do not show up or queues behave unexpectedly.
-
-Do not start by adding every product event. First prove that one event can queue and either upload or remain pending for the expected reason.
+Do not start by adding every product event. First prove that one event queues locally and either uploads or remains pending for the expected reason.
 
 ## Choose The SDK
 
-| SDK | Status | Use it for | Guide |
+| SDK | Public status | Use it for | Guide |
 | --- | --- | --- | --- |
-| ESP-IDF | Available, component version `0.2.0` | ESP32-family products built with ESP-IDF. | [ESP-IDF](/sdks/esp-idf) |
-| C/POSIX | Available, Shared Core behavior `0.2.0` | Embedded Linux devices, local development harnesses, and visible queue inspection. | [C/POSIX](/sdks/c-posix) |
-| MicroPython | Available, Shared Core behavior `0.2.0` | Firmware that can include the `_honch_core` MicroPython user C module. | [MicroPython](/sdks/micropython) |
-| Arduino ESP32 | In progress, canonical core wrapper | ESP32 Arduino sketches using typed properties and cooperative `Honch.tick()` / `Honch.loop()`. | [Arduino ESP32](/sdks/arduino) |
-| React Native Relay | In progress, package version `0.1.0` | Companion apps that receive relay chunks from offline devices and upload them later. | [React Native Relay](/sdks/react-native-relay) |
+| ESP-IDF | Stable `0.2.0` | ESP32-family firmware built with ESP-IDF. | [ESP-IDF](/sdks/esp-idf) |
+| C/POSIX | Stable `0.2.0` | Embedded Linux devices, local harnesses, and visible queue inspection. | [C/POSIX](/sdks/c-posix) |
+| MicroPython | Stable `0.2.0` | MicroPython firmware that can include the `_honch_core` user C module. | [MicroPython](/sdks/micropython) |
+| Arduino ESP32 | Preview `0.1.0` | ESP32 Arduino sketches with cooperative flushing. | [Arduino ESP32](/sdks/arduino) |
+| React Native Relay | Preview `0.1.0` | Companion apps that receive relay chunks from offline devices. | [React Native Relay](/sdks/react-native-relay) |
 
-Shared Core is the source of truth for common SDK behavior: typed event semantics, identity, lifecycle events, HQR1 queue records, queue policy, retry classification, compact wire-v2 upload encoding, and relay packetization. ESP-IDF, C/POSIX, MicroPython, and Arduino ESP32 align around that core. Platform ports provide storage, transport, timing, randomness, and platform-specific integration.
+Stable means the SDK is documented as a supported integration path. Preview means the API is usable for evaluation and controlled pilots, but production rollout should wait for the validation gates listed in the SDK guide.
 
-## What You Should Verify First
+## What Every SDK Does
 
-For every SDK, the first useful checkpoint is the same:
+Every direct-upload SDK lets you:
+
+- configure a project key and Capture endpoint;
+- identify the device and optional analytics identity;
+- track typed events with SDK-owned context;
+- queue locally before upload;
+- flush explicitly or through cooperative tick work;
+- preserve retryable failures and stop retrying permanent failures.
+
+React Native Relay is different: it is not a firmware analytics SDK. It is the mobile side of a BLE/offline relay path for devices that cannot upload directly.
+
+## First Verification Target
+
+For every SDK, verify:
 
 | Step | Proof |
 | --- | --- |
 | SDK initializes | Init returns success or does not raise. |
-| Identity exists | Device ID is generated, configured, or persisted. |
+| Identity exists | Device ID is configured, generated, or persisted. |
 | Event queues | A first event is accepted locally. |
-| Flush runs | Transport attempts `POST /capture`. |
-| Failure is understood | Retryable failures stay pending; permanent rejections drop or dead-letter. |
+| Flush runs | The SDK attempts `POST /capture`. |
+| Failure is understood | Retryable failures stay pending; permanent failures drop or dead-letter. |
 
-Once those are true, add product events, identity, sessions, battery, connectivity, GPIO, or relay flows.
-
-## What Every SDK Sends
-
-Each event has an event name, an on-device timestamp, a `distinct_id`, and typed properties. SDK-owned context such as `$device_id`, `$device_model`, `$firmware_version`, `$sdk_platform`, `$sdk_version`, and `$environment` is added automatically. User-supplied values with reserved SDK keys are rejected before queueing.
-
-SDKs also emit lifecycle events where the platform supports them:
-
-- `$device_boot`
-- `$device_shutdown`
-- `$firmware_update`
-- `$battery_low`
-- `$session_start`
-- `$session_end`
-- `$connectivity_change`
-
-## Upload Contract
-
-SDKs upload compact chunk frames:
-
-```text
-POST /capture
-Content-Type: application/vnd.honch.chunk
-X-Honch-Project-Key: <project_api_key>
-X-Honch-Stream-Id: <stream_id>
-```
-
-Capture also accepts the same compact chunk format on `/e` and `/chunks`. Use the hosted HTTPS capture endpoint in production; local development endpoints can use HTTP when intentionally configured.
-
-## Common Starting Points
-
-<Cards>
-  <Card title="Quickstart" href="/quickstart" description="Send and verify the first event for each SDK path." />
-  <Card title="ESP-IDF" href="/sdks/esp-idf" description="Install the ESP-IDF component, initialize NVS, track events, and verify hardware logs." />
-  <Card title="C/POSIX" href="/sdks/c-posix" description="Build locally, inspect queue files, and confirm capture uploads." />
-  <Card title="MicroPython" href="/sdks/micropython" description="Build firmware with _honch_core and validate the Python wrapper." />
-  <Card title="Arduino ESP32" href="/sdks/arduino" description="Use the in-progress Arduino wrapper with cooperative tick flushing." />
-  <Card title="FAQ" href="/faq" description="Troubleshoot queue, auth, transport, identity, and relay failures." />
-</Cards>
+Once this path works, add product events, identity, sessions, battery, connectivity, GPIO, or relay flows.

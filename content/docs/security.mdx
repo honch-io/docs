@@ -1,0 +1,46 @@
+---
+title: Security
+description: TLS, endpoint, credential, and payload guidance for production Honch SDK integrations.
+---
+
+Production integrations should treat Honch telemetry as networked product infrastructure. Configure endpoints, TLS, credentials, and payloads deliberately.
+
+## Endpoint And TLS
+
+Use the hosted HTTPS Capture endpoint in production:
+
+```text
+https://capture.honch.io
+```
+
+SDKs append `/capture` during upload. Local HTTP is acceptable only for an intentional local Capture service in development or test environments.
+
+Firmware TLS failures are often caused by missing trusted roots or invalid time. Before debugging event encoding, verify:
+
+- the device clock is valid enough for certificate verification;
+- the platform trust store or configured root CA matches the Capture endpoint;
+- local test endpoints are configured intentionally;
+- `insecureSkipTlsVerify` or equivalent options are disabled in production.
+
+## API Keys
+
+Project keys are transport credentials sent in `X-Honch-Project-Key`. Do not put project keys in event properties, logs, screenshots, public repositories, or crash reports.
+
+Recommended handling:
+
+- inject keys through firmware configuration, build secrets, or secure provisioning;
+- use environment-specific keys for development, staging, and production;
+- rotate keys if a device image, mobile app, log, or repository exposes one;
+- avoid printing full keys in SDK logs.
+
+## Event Payloads
+
+Do not send secrets in event names, property keys, property values, device model, firmware version, or environment. Keep payloads small and stable. Prefer numeric values for counts, durations, battery level, signal strength, and retries.
+
+SDK-owned property names such as `$device_id`, `$sdk_version`, `$environment`, `$session_id`, `$battery_level`, and `$wifi_rssi` are reserved and rejected when supplied by application code.
+
+## Relay Security
+
+React Native Relay acknowledges a firmware message only after the completed message is validated and durably stored on mobile. Capture upload happens later and should use the same production HTTPS and key-handling rules as direct SDK uploads.
+
+For production relay deployments, validate BLE permissions, background behavior, durable storage across app restart, retry behavior, and accepted Capture responses inside the consuming mobile app.

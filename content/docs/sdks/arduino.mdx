@@ -1,15 +1,13 @@
 ---
 title: Arduino ESP32
-description: Configure, run, and verify the in-progress Honch Arduino ESP32 wrapper.
+description: Configure, run, and verify the preview Honch Arduino ESP32 wrapper.
 ---
 
-The Arduino ESP32 SDK is a C++ wrapper around the canonical Honch C core. It targets ESP32 boards using the Arduino framework and exposes a singleton-style `Honch` API with typed properties and cooperative scheduled flushing.
+The Arduino ESP32 SDK is a preview C++ wrapper around the canonical Honch C core. It targets ESP32 boards using the Arduino framework and exposes a singleton-style `Honch` API with typed properties and cooperative scheduled flushing.
 
-Status: in progress. The current wrapper includes `Honch.tick()` / `Honch.loop()` and aligns with the canonical HQR1 queue and wire-v2 upload path. Recent SDK production E2E notes include Arduino ESP32 device gates, but relay, OTA, and non-ESP32 Arduino boards are outside this milestone.
+Status: Preview `0.1.0`. Use it for evaluation or controlled pilots until your product has passed hardware, TLS, offline queue, and power-cycle validation.
 
-## Before You Start
-
-You need:
+## Requirements
 
 | Requirement | Notes |
 | --- | --- |
@@ -20,11 +18,11 @@ You need:
 | Event buffer | Caller-owned RAM buffer. |
 | TLS root CA | Application-owned PEM through `rootCaPem` for HTTPS endpoints. |
 
-Not included: relay, OTA, and non-ESP32 Arduino boards.
+Not supported: non-ESP32 Arduino boards, BLE relay, and OTA integration.
 
-## 1. Add The Library
+## Install
 
-Include the library in an ESP32 Arduino project that can compile the SDK sources:
+Use a source checkout or vendored copy of the SDK in an ESP32 Arduino project that can compile the Arduino wrapper and shared core sources.
 
 ```cpp
 #include <WiFi.h>
@@ -33,9 +31,7 @@ Include the library in an ESP32 Arduino project that can compile the SDK sources
 
 Expected result: your sketch can reference `HonchConfig` and the singleton `Honch` object.
 
-## 2. Configure Wi-Fi First
-
-The Arduino wrapper does not own Wi-Fi setup. Connect before expecting `Honch.tick()` or `Honch.flush()` to deliver events:
+## Configure Wi-Fi First
 
 ```cpp
 WiFi.begin("ssid", "password");
@@ -44,9 +40,9 @@ while (WiFi.status() != WL_CONNECTED) {
 }
 ```
 
-Expected result: `WiFi.status()` returns `WL_CONNECTED`.
+The wrapper does not own Wi-Fi setup. Connect before expecting `Honch.tick()` or `Honch.flush()` to deliver events.
 
-## 3. Configure Honch
+## Configure Honch
 
 ```cpp
 struct HonchConfig {
@@ -64,22 +60,9 @@ struct HonchConfig {
 };
 ```
 
-Required fields:
+Required fields are `apiKey`, `host`, `deviceModel`, `firmwareVersion`, `eventBuffer`, and `eventBufferSize`. Use `rootCaPem` for HTTPS endpoints. Keep `insecureSkipTlsVerify` false in production.
 
-| Field | Example |
-| --- | --- |
-| `apiKey` | `project-key` |
-| `host` | `https://capture.honch.io` |
-| `deviceModel` | `esp32-devkit` |
-| `firmwareVersion` | `1.0.0` |
-| `eventBuffer` | Static byte buffer. |
-| `eventBufferSize` | Buffer size in bytes. |
-
-Use `rootCaPem` for hosted HTTPS endpoints. `insecureSkipTlsVerify` exists for local testing only and should stay `false` in production.
-
-`eventBufferSize` is passed to the core as `max_event_bytes`. Queueing uses the canonical core HQR1 typed event records through the Arduino storage adapter.
-
-## 4. Send A First Event
+## First Event
 
 ```cpp
 #include <WiFi.h>
@@ -132,9 +115,7 @@ void loop() {
 }
 ```
 
-Expected result: `Honch.begin(config)` returns `true`, `app_started` is queued, and `Honch.tick()` attempts delivery to `<host>/capture` when the flush interval or event threshold is reached. Use `Honch.flush()` when you want an immediate drain attempt.
-
-## 5. Use The Public API
+## API
 
 ```cpp
 bool Honch.begin(const HonchConfig &config);
@@ -152,60 +133,27 @@ const char *Honch.deviceId();
 const char *Honch.lastError();
 ```
 
-The wrapper returns `bool` and stores the last SDK status. Call `Honch.lastError()` immediately after a failed call. Typed helpers such as `honch_str`, `honch_i64`, `honch_bool`, arrays, and maps are shared with the portable C core.
-
-## 6. Add Identity And Sessions
-
-```cpp
-const honch_property_t traits[] = {
-  honch_prop("plan", honch_str("beta")),
-};
-Honch.identify("account-123", traits, 1);
-
-Honch.sessionStart("recording");
-const honch_property_t properties[] = {
-  honch_prop("mode", honch_str("hdr")),
-};
-Honch.track("recording_started", properties, 1);
-Honch.sessionEnd();
-```
-
-Expected result: identified events use the configured distinct ID, and session events add `$session_id`.
+Call `Honch.lastError()` immediately after a failed call.
 
 ## Runtime Behavior
 
 - SDK platform is `arduino-esp32`.
-- Device ID is derived from the ESP32 eFuse MAC as `esp32-<12 uppercase hex chars>` when running on Arduino, then passed to the core as configured identity.
-- Scheduled flushing is cooperative. Call `Honch.tick()` or `Honch.loop()` from the sketch loop or your own firmware task.
-- `Honch.track`, `Honch.identify`, and `Honch.setProperty` use typed values shared with the portable C core.
-- SDK-owned auto-property keys supplied by users are rejected before queueing.
+- Device ID is derived from the ESP32 eFuse MAC as `esp32-<12 uppercase hex chars>`.
+- Scheduled flushing is cooperative through `Honch.tick()` or `Honch.loop()`.
 - `Honch.shutdown()` queues `$device_shutdown`, attempts a final flush, and releases the core client.
 
-## Transport
+## Security
 
-The transport appends `/capture` to `host` and sends:
+HTTPS uses `WiFiClientSecure`. Configure `rootCaPem` for the Capture endpoint. Use `insecureSkipTlsVerify` only for local testing where certificate verification is intentionally disabled.
 
-```text
-Content-Type: application/vnd.honch.chunk
-X-Honch-Project-Key: <apiKey>
-X-Honch-Stream-Id: <stream_id>
-```
-
-HTTPS uses `WiFiClientSecure`. Set `insecureSkipTlsVerify` only for local testing where certificate verification is intentionally disabled.
-
-The Arduino wrapper sends compact wire-v2 chunk frames to Capture. It does not use the mobile React Native relay path.
-
-## Examples
-
-- `examples/HonchBasic/HonchBasic.ino` connects to Wi-Fi, initializes Honch, tracks `boot`, and calls `Honch.tick()` from `loop()`.
-- `examples/HonchOfflineQueue/HonchOfflineQueue.ino` queues before Wi-Fi, then connects, flushes once, and keeps calling `Honch.tick()` from `loop()`.
-
-If you use Arduino CLI, you can compile the examples from the SDK repository:
+## Verify
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32 ports/arduino/examples/HonchBasic
 arduino-cli compile --fqbn esp32:esp32:esp32 ports/arduino/examples/HonchOfflineQueue
 ```
+
+Before production, verify on your product hardware that Wi-Fi, TLS, queueing before Wi-Fi, flush, retry, reset/power-cycle behavior, and Capture acceptance all work as expected.
 
 ## Troubleshooting
 
@@ -214,5 +162,5 @@ arduino-cli compile --fqbn esp32:esp32:esp32 ports/arduino/examples/HonchOffline
 | `Honch.begin` returns `false` | Required config fields and event buffer. |
 | `Honch.flush` returns `false` | Wi-Fi, host, TLS, project key, or retryable response. |
 | No scheduled delivery after tracking | Make sure `Honch.tick()` or `Honch.loop()` is called from `loop()`. |
-| TLS fails locally | Use a proper HTTPS endpoint or intentionally set `insecureSkipTlsVerify` for local tests. |
+| TLS fails locally | Use a proper HTTPS endpoint or intentionally disable verification only for local tests. |
 | Queue fills | Network or Capture response is retryable; reduce event volume or fix delivery. |

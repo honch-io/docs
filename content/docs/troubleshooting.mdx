@@ -1,0 +1,49 @@
+---
+title: Troubleshooting
+description: Diagnose queue, upload, auth, TLS, persistence, and relay issues.
+---
+
+Start with the local SDK path before debugging dashboards. A healthy integration accepts an event, writes it to local queue state, builds a compact upload, sends `POST /capture`, and consumes or preserves the event based on Capture response.
+
+## Events Queue But Do Not Appear
+
+Check in this order:
+
+1. SDK initialization succeeded.
+2. The event call returned success or did not raise.
+3. Local queue state exists.
+4. The endpoint is the base Capture URL and the SDK appends `/capture`.
+5. Network or Wi-Fi is connected.
+6. Device time and TLS trust are valid for HTTPS.
+7. The project key is correct.
+8. Capture response is known: success, retryable, auth failure, or permanent rejection.
+
+| Queue state | Meaning |
+| --- | --- |
+| Pending grows | Delivery is failing or responses are retryable. |
+| Dead-letter grows | Capture or the SDK classified data as permanently rejected. |
+| Queue drains | Capture accepted the message. |
+| RAM events disappear after reset | They were not persisted before reset or power loss. |
+
+## HTTP And Transport Failures
+
+| Symptom | Likely cause | Action |
+| --- | --- | --- |
+| `401` | Project key rejected. | Replace the key, restart or reinitialize if needed, send a new event, and flush again. |
+| `408`, `409`, `429`, `5xx` | Retryable transport or Capture state. | Leave the queue pending and verify backoff/recovery. |
+| `400`, `413`, `415`, `422` | Malformed or unsupported data. | Fix payload shape, endpoint, or SDK/server expectation; send a new event. |
+| TLS failure | Missing root CA, invalid device time, or local endpoint mismatch. | Fix certificate/time setup; do not disable verification in production. |
+
+## SDK-Specific Checks
+
+| SDK | Check |
+| --- | --- |
+| ESP-IDF | NVS initialization, Wi-Fi IP, SNTP/time, TLS bundle, event buffer, GPIO pin limits. |
+| C/POSIX | Writable queue directory, one active client, libcurl connectivity, `pending/` and `dead/` contents. |
+| MicroPython | `_honch_core` import, wrapper import, mounted filesystem, `urequests`, memory headroom. |
+| Arduino ESP32 | Wi-Fi connection, root CA PEM, `Honch.tick()` or `Honch.loop()` in `loop()`, `Honch.lastError()` after failure. |
+| React Native Relay | BLE permissions, native bridge registration, frame checksum/offsets, durable store writes, ACK writes, background upload setup. |
+
+## Do Not Retry Blindly
+
+Permanent rejections are not useful to retry unchanged. Fix the key, endpoint, payload, or server-side expectation, then send a new event. Retryable failures should remain pending and drain after the underlying condition recovers.

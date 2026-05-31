@@ -1,11 +1,11 @@
 ---
 title: Quickstart
-description: Get from a fresh SDK checkout to a verified first Honch event.
+description: Choose an SDK, configure Capture, and verify a first Honch event.
 ---
 
-This guide is the shortest useful path through the SDKs. Pick the runtime your device can support, send one event, then verify that the SDK queued or delivered it before you add product-specific tracking.
+This is the shortest safe path through Honch: choose the SDK your device can support, send one event, and verify local queue or delivery behavior before adding product tracking.
 
-## 1. Choose The SDK
+## 1. Choose An SDK
 
 | Target | Use | Start here |
 | --- | --- | --- |
@@ -13,35 +13,31 @@ This guide is the shortest useful path through the SDKs. Pick the runtime your d
 | Embedded Linux, POSIX device process, or local C harness | C/POSIX SDK | [C/POSIX guide](/sdks/c-posix) |
 | MicroPython firmware with custom user modules | MicroPython SDK plus `_honch_core` | [MicroPython guide](/sdks/micropython) |
 | ESP32 Arduino sketches | Arduino ESP32 library | [Arduino guide](/sdks/arduino) |
-| BLE/offline device forwarding through a companion app | React Native Relay | [React Native Relay guide](/sdks/react-native-relay) |
+| BLE/offline forwarding through a companion app | React Native Relay | [React Native Relay guide](/sdks/react-native-relay) |
 
-If you are not sure, start with C/POSIX on your development machine. It exercises the same shared behavior as the embedded ports without flashing hardware.
+If you are not sure, start with C/POSIX on a development machine. It exercises the same shared behavior as the embedded ports without flashing hardware.
 
-## 2. Set Your Capture Values
+## 2. Set Capture Values
 
-Every direct-upload SDK needs the same product values:
+Direct-upload SDKs need:
 
-| Value | Example | Why it matters |
+| Value | Example | Notes |
 | --- | --- | --- |
 | Project API key | `project-key` | Sent as `X-Honch-Project-Key`. |
 | Capture endpoint | `https://capture.honch.io` | SDKs append `/capture`. |
-| Device model | `demo-board` | Lets you filter by hardware type. |
-| Firmware version | `1.0.0` | Drives firmware rollout and update events. |
+| Device model | `demo-board` | Product or board model. |
+| Firmware version | `1.0.0` | Used for filtering and firmware-update events. |
 | Environment | `production` | Defaults to `production` when omitted. |
 
-For local capture testing, use your local service URL as the endpoint or host. Production firmware should use the hosted HTTPS endpoint.
+Production firmware should use the hosted HTTPS endpoint. Local HTTP is only for an intentional local Capture service.
 
-## 3. Send A First Event
+## 3. Send One Event
 
 ### ESP-IDF
-
-Install the component from an ESP-IDF project:
 
 ```bash
 idf.py add-dependency "honch-io/honch^0.2.0"
 ```
-
-Initialize NVS before Honch, then track and run the cooperative flush work:
 
 ```c
 #include "honch.h"
@@ -73,19 +69,13 @@ void app_main(void)
 }
 ```
 
-Expected result: init queues lifecycle events, `app_started` is queued as an HQR1 typed event record, and `honch_tick()` attempts a compact wire-v2 `POST /capture` upload when the device has network connectivity.
-
 ### C/POSIX
-
-Build the SDK and examples:
 
 ```bash
 cd ports/posix
 cmake -S . -B build -DHONCH_BUILD_EXAMPLES=ON
 cmake --build build
 ```
-
-Use a writable queue directory:
 
 ```c
 #include "honch/honch.h"
@@ -107,25 +97,20 @@ int main(void)
             honch_prop("source", honch_str("posix")),
         };
         honch_track(client, "app_started", properties, 1);
-        honch_tick(client);
         honch_flush(client);
         honch_shutdown(client);
     }
 }
 ```
 
-Expected result: `.honch-queue/state/` contains identity state, retryable failures stay in `.honch-queue/pending/`, and accepted events are consumed.
-
 ### MicroPython
 
-Build firmware with the C user module. Installing Python files alone is not enough.
+Build firmware with `_honch_core`; installing Python files alone is not enough.
 
 ```bash
 make -C ports/unix \
   USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake
 ```
-
-Then use the Python wrapper:
 
 ```python
 import honch
@@ -139,16 +124,13 @@ client = honch.Honch(
 )
 
 client.track("app_started", {"source": "micropython"})
-client.tick()
 client.flush()
 client.shutdown()
 ```
 
-Expected result: files are created below `/honch/pending`, `/honch/dead`, and `/honch/state` as needed. Call `client.tick()` periodically from the device loop for scheduled cooperative flush work; call `flush()` when you want an immediate drain attempt.
-
 ### Arduino ESP32
 
-Use this for ESP32 Arduino sketches that call `Honch.tick()` or `Honch.loop()` from `loop()`:
+Arduino ESP32 is preview. Use it for evaluation or controlled pilots until your product has passed its own hardware validation.
 
 ```cpp
 #include <WiFi.h>
@@ -174,8 +156,6 @@ void setup() {
   config.environment = "production";
   config.eventBuffer = eventBuffer;
   config.eventBufferSize = sizeof(eventBuffer);
-  config.flushIntervalSeconds = 60;
-  config.flushEventThreshold = 30;
 
   if (Honch.begin(config)) {
     const honch_property_t properties[] = {
@@ -190,11 +170,9 @@ void loop() {
 }
 ```
 
-Expected result: `Honch.begin()` returns `true`, the typed `app_started` event is queued, and scheduled cooperative flush work runs from `loop()`. Recent SDK production E2E notes include Arduino ESP32 device gates, but keep relay, OTA, and non-ESP32 Arduino boards out of this integration path.
-
 ### React Native Relay
 
-Use relay only when the device cannot upload directly. The firmware sends relay frames over BLE; the mobile app stores completed compact messages, ACKs durable receipt, and uploads to Capture. This is a separate relay surface, not proof of a direct firmware SDK runtime.
+React Native Relay is preview and is only for devices that cannot upload directly. The mobile app ACKs the device after the completed relay message is durably stored, then uploads to Capture separately.
 
 ```ts
 import { NativeEventEmitter, NativeModules } from "react-native";
@@ -227,34 +205,14 @@ const relay = createMobileRelay({
 relay.subscribeNativeFrames();
 ```
 
-Expected result: valid relay frames are assembled into durable mobile queue entries. The firmware should only receive an ACK after the completed compact message is durably stored.
-
-## 4. Verify The First Event
+## 4. Verify
 
 Check these in order:
 
 1. The SDK init call succeeds.
-2. Your event call returns success or does not raise.
-3. Local queue state is created.
-4. The configured endpoint is correct and the SDK appends `/capture`.
-5. Capture returns `202`, `204`, or another success accepted by that port.
+2. The event call returns success or does not raise.
+3. Local queue state exists.
+4. The configured endpoint is the base host, and the SDK appends `/capture`.
+5. Capture accepts the upload or the SDK leaves retryable data pending.
 
-If the first event does not appear, do not add more tracking yet. Fix delivery first, then add identity, sessions, and product events.
-
-## 5. Add The First Useful Product Events
-
-After the first event is verified, add only the events you would debug from:
-
-| Event | When to send |
-| --- | --- |
-| `app_started` | After SDK init and app startup. |
-| `button_pressed` | From a task or GPIO helper, not raw ISR context. |
-| `mode_changed` | When the device changes user-visible operating state. |
-| `sync_started` / `sync_finished` | Around network or relay sync flows. |
-| `error_seen` | When firmware sees an actionable recoverable error. |
-
-Keep property payloads small and stable. Prefer names like `mode`, `reason`, `source`, `duration_ms`, and `count` over ad hoc nested blobs.
-
-## Next Step
-
-Read the SDK-specific guide for your target. Each one shows the install path, configuration fields, expected runtime signs, and the first troubleshooting checks.
+If the first event does not appear, stop adding events and use [Troubleshooting](/troubleshooting).

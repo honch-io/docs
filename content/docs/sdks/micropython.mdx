@@ -1,28 +1,26 @@
 ---
 title: MicroPython
-description: Build firmware with _honch_core, install the Python wrapper, and verify MicroPython events.
+description: Build firmware with _honch_core, install the wrapper, and verify MicroPython events.
 ---
 
-The MicroPython SDK is a thin Python wrapper around the `_honch_core` user C module. It is not a standalone pure-Python SDK. The firmware image must include the Honch user module so Shared Core can own identity, queueing, retry, compact encoding, and relay packetization.
+The MicroPython SDK is a stable thin Python wrapper around the `_honch_core` user C module. It is not a standalone pure-Python SDK. Firmware must include the Honch user module so shared SDK behavior owns identity, queueing, retry, compact encoding, and packetization.
 
-Status: available, Shared Core behavior `0.2.0`.
+Status: Stable `0.2.0`.
 
-## Before You Start
-
-You need:
+## Requirements
 
 | Requirement | Notes |
 | --- | --- |
-| MicroPython checkout | Build from source for the target port. |
+| MicroPython checkout | Build firmware from source for the target port. |
 | Honch user module | `ports/micropython/usermod/honch/micropython.cmake`. |
-| Python wrapper files | Frozen through `manifest.py` or installed with `mip`. |
+| Python wrapper | Freeze through `manifest.py` or install with `mip` after firmware includes `_honch_core`. |
 | Queue directory | Writable filesystem path on the device. |
 | Network stack | Board-specific; transport imports `urequests`. |
 | Project key | Sent as `X-Honch-Project-Key`. |
 
-Installing the wrapper files without `_honch_core` will not work.
+CircuitPython is not covered by this SDK because it does not use the same MicroPython user C module flow.
 
-## 1. Build Firmware With `_honch_core`
+## Build Firmware
 
 For the Unix port:
 
@@ -31,7 +29,7 @@ make -C ports/unix \
   USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake
 ```
 
-For board firmware, pass the same user module path and freeze the wrapper:
+For board firmware:
 
 ```bash
 make BOARD=MYBOARD \
@@ -39,36 +37,17 @@ make BOARD=MYBOARD \
   FROZEN_MANIFEST=/path/to/SDK/ports/micropython/manifest.py
 ```
 
-Expected result: importing `_honch_core` succeeds in MicroPython.
+Expected result: `import _honch_core` succeeds in MicroPython.
 
-## 2. Install Or Freeze The Wrapper
+## Install Or Freeze The Wrapper
 
-The wrapper can be frozen with the manifest above. `mip` can also install the wrapper files from `ports/micropython/package.json`, but the firmware still needs `_honch_core`.
+The wrapper can be frozen with `manifest.py`. `mip` can also install wrapper files from the SDK package metadata, but the firmware must already contain `_honch_core`.
 
-Expected result: importing `honch` succeeds.
+Expected result: `import honch` succeeds.
 
-## 3. Create A Queue Directory
+## Configure
 
-Pick a path that survives reboot on your board:
-
-```text
-/honch/
-  pending/
-  dead/
-  state/
-```
-
-The SDK creates subdirectories and files as needed. Make sure the filesystem is mounted before creating the client.
-
-## 4. Configure The Client
-
-Required:
-
-- `api_key`
-- `endpoint_url`
-- `device_model`
-- `firmware_version`
-- `queue_directory`
+Required options are `api_key`, `endpoint_url`, `device_model`, `firmware_version`, and `queue_directory`.
 
 Useful options:
 
@@ -80,13 +59,13 @@ Useful options:
 | `max_queued_events` | `1000`. |
 | `max_event_bytes` | `16384`. |
 | `transport_timeout_ms` | `10000`. |
-| `flush_interval_seconds` | `60`; used by cooperative `client.tick()` scheduling. |
+| `flush_interval_seconds` | `60`. |
 | `flush_event_threshold` | `30`. |
 | `battery_low_threshold` | `15`. |
 
 Python `platform=`, `transport=`, `battery_callback=`, and `auto_properties_callback=` hooks are rejected. Board behavior belongs in the C user module.
 
-## 5. Send A First Event
+## First Event
 
 ```python
 import honch
@@ -104,16 +83,9 @@ client.flush()
 client.shutdown()
 ```
 
-Expected result:
+Call `client.tick()` periodically from the device main loop for scheduled cooperative flush work.
 
-- state files are written under `/honch/state`;
-- retryable failures stay under `/honch/pending`;
-- permanent rejections move attempted events to `/honch/dead`;
-- accepted events are consumed.
-
-Call `client.tick()` periodically from the device main loop for scheduled cooperative flush work. Call `flush()` explicitly when you want to drain immediately.
-
-## 6. Add Identity, Sessions, And Connectivity
+## Identity, Sessions, And Connectivity
 
 ```python
 client.identify("account-123", {"plan": "beta"})
@@ -129,9 +101,9 @@ client.connectivity_changed(True)
 
 Connectivity methods suppress duplicate states and queue `$connectivity_change` only when the state changes.
 
-## 7. Handle Errors
+## Errors
 
-The wrapper maps `_honch_core` statuses into Python exceptions:
+The wrapper maps core statuses into Python exceptions:
 
 | Exception | Meaning |
 | --- | --- |
@@ -140,13 +112,28 @@ The wrapper maps `_honch_core` statuses into Python exceptions:
 | `TransportError` | Transport or timeout failure. |
 | `RateLimitedError` | Capture rate limit. |
 | `ServerError` | Capture server error. |
-| `RejectedError` | Permanent capture rejection. |
+| `RejectedError` | Permanent Capture rejection. |
 | `NotInitializedError` | Client missing or already shut down. |
 | `HonchError` | Generic SDK error. |
 
-`CompressionUnavailableError` exists in the public wrapper exports for compatibility, but the current compact chunk path does not expose a compression feature.
+## Persistence
 
-## 8. Verify Runtime Behavior
+Choose a queue directory on a filesystem that survives reboot:
+
+```text
+/honch/
+  pending/
+  dead/
+  state/
+```
+
+The SDK creates subdirectories and files as needed.
+
+## Security
+
+Use HTTPS in production and ensure the board has the network and time setup needed for certificate verification. Keep project keys out of source control, logs, and event properties.
+
+## Verify
 
 Check these before adding more events:
 
@@ -154,22 +141,7 @@ Check these before adding more events:
 2. `import honch` succeeds.
 3. Client creation does not raise.
 4. Queue files appear below `queue_directory`.
-5. `flush()` reaches the configured endpoint or leaves retryable files pending.
-
-The C user module owns storage and transport adapters. It stores queued events as HQR1 typed event records, encodes wire-v2 compact event messages, and sends compact chunks to:
-
-```text
-POST <endpoint_url>/capture
-Content-Type: application/vnd.honch.chunk
-X-Honch-Project-Key: <api_key>
-X-Honch-Stream-Id: <stream_id>
-```
-
-## Examples
-
-- `examples/basic.py` tracks identity, a session, a custom event, flush, and shutdown.
-- `examples/persistent_queue.py` queues an event before network delivery and tolerates retryable flush errors.
-- `examples/pico_w_main.py` is a Pico W example with Wi-Fi, identity, sessions, nested properties, reserved-property conflict checks, and flush.
+5. `flush()` reaches the endpoint or leaves retryable files pending.
 
 ## Troubleshooting
 
@@ -181,4 +153,4 @@ X-Honch-Stream-Id: <stream_id>
 | Flush does nothing | Network setup, `urequests`, endpoint URL, project key. |
 | Files stay in `pending` | Retryable transport or Capture response. |
 | Files move to `dead` | Capture permanently rejected the payload. |
-| Out-of-memory behavior | Confirm C heap reservation for the target port. |
+| Out-of-memory behavior | Confirm C heap reservation and runtime headroom for the target port. |

@@ -1,0 +1,37 @@
+---
+title: SDK Status
+description: Public SDK stability, support, and verification status.
+---
+
+Use this page to decide whether an SDK is ready for your product path. Status labels describe the public documentation contract. Verification evidence describes what is explicitly documented as tested.
+
+## Status Labels
+
+| Label | Meaning |
+| --- | --- |
+| Stable | Supported integration path for new product work. Follow the production checklist before shipping. |
+| Preview | Usable for evaluation or controlled pilots. Do not treat as production-ready until your product passes the listed validation gates. |
+| Expected, unverified | The target is expected to work from platform support, but the docs do not claim explicit verification evidence. |
+| Not supported | Outside the current SDK contract. |
+
+## SDK Matrix
+
+| SDK | Public status | Version | Best fit | Verification evidence in docs |
+| --- | --- | --- | --- | --- |
+| ESP-IDF | Stable | `0.2.0` | ESP32-family firmware built with ESP-IDF. | Component install, example build/run flow, NVS requirement, queue behavior, TLS requirement. |
+| C/POSIX | Stable | `0.2.0` | Embedded Linux, local harnesses, and visible queue inspection. | CMake build, examples, file-backed queue, libcurl transport, local storage inspection. |
+| MicroPython | Stable | `0.2.0` | MicroPython firmware that can include `_honch_core`. | User C module build path, wrapper import checks, file-backed queue behavior. |
+| Arduino ESP32 | Preview | `0.1.0` | ESP32 Arduino sketches. | Source/include path, example compile commands, cooperative tick behavior. Product hardware validation remains required. |
+| React Native Relay | Preview | `0.1.0` | Companion apps receiving BLE relay chunks from offline devices. | TypeScript/mobile relay wiring, MMKV storage guidance, host-app validation requirements. Production native host validation remains required. |
+
+## Platform Support
+
+| SDK | Supported or expected targets | Not supported or out of scope |
+| --- | --- | --- |
+| ESP-IDF | ESP32-family boards supported by ESP-IDF `>=5.0`; mark specific boards as verified in your release evidence. | Non-ESP-IDF Arduino sketches, devices without configured Wi-Fi/TLS/time setup. |
+| C/POSIX | macOS/Linux development harnesses and embedded Linux-style systems with CMake, C11, and libcurl. | Concurrent clients sharing one queue directory. |
+| MicroPython | MicroPython ports that can build the `_honch_core` user C module and provide writable filesystem/network support. | CircuitPython and firmware images without `_honch_core`. |
+| Arduino ESP32 | ESP32 Arduino projects using `WiFi`, `Preferences`, `HTTPClient`, and `WiFiClientSecure`. | Non-ESP32 Arduino boards, BLE relay, OTA integration. |
+| React Native Relay | React Native host apps with native iOS/Android BLE bridge setup and durable mobile storage. | Direct firmware analytics collection, complete standalone host apps. |
+
+Before shipping, record the exact board, OS/toolchain version, SDK version, Capture endpoint, TLS setup, and verification result for your product.
