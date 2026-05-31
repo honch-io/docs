@@ -3,7 +3,7 @@ title: Honch SDKs
 description: Product analytics SDKs for connected hardware, embedded Linux, MicroPython, Arduino ESP32, and mobile relay flows.
 ---
 
-Honch SDKs collect product analytics from connected hardware. They run in firmware, embedded Linux processes, MicroPython firmware, ESP32 Arduino sketches, or a companion mobile relay app. SDKs queue events locally, preserve retryable failures, and upload compact messages to Honch Capture.
+Honch SDKs collect product analytics from connected hardware. They run in firmware, embedded Linux processes, MicroPython firmware, ESP32 Arduino sketches, or a companion mobile relay app. SDKs queue events locally before upload, but embedded RAM queues are volatile unless the host opts into durable queue storage.
 
 ## Start Here
 
@@ -37,6 +37,8 @@ Every direct-upload SDK lets you:
 - flush explicitly or through cooperative tick work;
 - preserve retryable failures and stop retrying permanent failures.
 
+Check each SDK guide for durability defaults. ESP-IDF and Arduino ESP32 use caller-owned RAM queues by default; reboot-safe event queues require caller-provided storage ops.
+
 React Native Relay is different: it is not a firmware analytics SDK. It is the mobile side of a BLE/offline relay path for devices that cannot upload directly.
 
 ## First Verification Target
@@ -51,4 +53,4 @@ For every SDK, verify:
 | Flush runs | The SDK attempts `POST /capture`. |
 | Failure is understood | Retryable failures stay pending; permanent failures drop or dead-letter. |
 
-Once this path works, add product events, identity, sessions, battery, connectivity, GPIO, or relay flows.
+Once this path works, add product events, identity, sessions, battery, connectivity, host-owned GPIO tracking, or relay flows.

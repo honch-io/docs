@@ -26,13 +26,18 @@ Platform SDKs own the platform integration: storage, transport, time, randomness
 | Max queued events | `1000` where the port exposes this setting |
 | Max event bytes | `16384` where the port exposes this setting |
 | Flush interval | `60` seconds |
+| Minimum outbound flush spacing | `10000` ms where the port exposes this setting |
 | Flush event threshold | `30` events |
+| Flush batches per explicit flush | `1` where the port exposes this setting |
+| Flush batches during shutdown | `1` where the port exposes this setting |
 | Initial retry backoff | `1` second |
 | Maximum retry backoff | `5` minutes |
 | Retry jitter | plus or minus 25% |
 | Battery-low threshold | `15` percent |
 
-The portable core does not start a hidden background thread for product applications. Call the tick API exposed by your SDK, or call flush explicitly when you want an immediate delivery attempt.
+The portable core does not start a hidden background thread for product applications. Call the tick API exposed by your SDK from a scheduler or low-priority task, or call flush explicitly when you want an immediate delivery attempt. On embedded targets, tick and flush can perform transport work when uploads are enabled.
+
+Ports may expose separate state storage and event queue storage hooks. State storage preserves identity and firmware-version state. Event queue storage preserves tracked events pending upload. Without a durable event queue, embedded SDKs that use caller-owned RAM buffers lose pending events across reset or power loss.
 
 ## Event Time And Context
 

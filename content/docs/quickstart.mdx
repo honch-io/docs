@@ -41,14 +41,23 @@ idf.py add-dependency "honch-io/honch^0.2.0"
 
 ```c
 #include "honch.h"
-#include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static uint8_t event_buffer[16384];
 
+static void honch_telemetry_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        honch_tick();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 void app_main(void)
 {
-    nvs_flash_init();
-    // Initialize Wi-Fi and time sync before expecting delivery.
+    // Initialize Wi-Fi, time, and TLS trust before expecting delivery.
 
     honch_config_t config = {
         .api_key = CONFIG_HONCH_API_KEY,
@@ -64,7 +73,7 @@ void app_main(void)
             honch_prop("source", honch_str("esp-idf")),
         };
         honch_track("app_started", properties, 1);
-        honch_tick();
+        xTaskCreate(honch_telemetry_task, "honch_telemetry", 4096, NULL, 2, NULL);
     }
 }
 ```
@@ -156,6 +165,7 @@ void setup() {
   config.environment = "production";
   config.eventBuffer = eventBuffer;
   config.eventBufferSize = sizeof(eventBuffer);
+  config.flushMinIntervalMs = 10000;
 
   if (Honch.begin(config)) {
     const honch_property_t properties[] = {
@@ -211,7 +221,7 @@ Check these in order:
 
 1. The SDK init call succeeds.
 2. The event call returns success or does not raise.
-3. Local queue state exists.
+3. Local queue state exists, or the SDK reports a RAM queue depth.
 4. The configured endpoint is the base host, and the SDK appends `/capture`.
 5. Capture accepts the upload or the SDK leaves retryable data pending.
 

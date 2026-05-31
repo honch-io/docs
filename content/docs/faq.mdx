@@ -26,7 +26,7 @@ Yes in production. Use `https://capture.honch.io` with certificate verification 
 
 ## Does the SDK flush in the background?
 
-No unmanaged background upload thread is hidden from your application. Call the cooperative tick API from your loop or scheduler, or call flush explicitly for an immediate drain attempt.
+No unmanaged background upload thread is hidden from your application. Call the cooperative tick API from a scheduler or low-priority task, or call flush explicitly for an immediate drain attempt. On embedded targets, tick and flush can perform network I/O when uploads are enabled.
 
 ## What gets collected automatically?
 
@@ -38,7 +38,7 @@ No. SDK-owned property keys are reserved and rejected before queueing. Use a dif
 
 ## What happens offline?
 
-Events queue locally before upload. Retryable failures remain pending. Permanent rejections are dropped or moved to dead-letter storage depending on the SDK.
+Events queue locally before upload. Retryable failures remain pending. Permanent rejections are dropped or moved to dead-letter storage depending on the SDK. ESP-IDF and Arduino ESP32 use volatile RAM queues by default; use caller-provided durable queue ops when pending events must survive reset or power loss.
 
 ## What does reset do?
 
@@ -50,7 +50,7 @@ The MicroPython package is a thin wrapper around `_honch_core`. Firmware must in
 
 ## Can I call track from an ISR?
 
-Do not call full SDK tracking APIs from ISR context. Tracking can validate input, take locks, allocate, encode, and queue. Use platform helpers or move the signal into a normal task first.
+Do not call full SDK tracking APIs from ISR context. Tracking can validate input, take locks, allocate, encode, and queue. Move the signal into a normal task first.
 
 ## How does React Native Relay ACK a device?
 

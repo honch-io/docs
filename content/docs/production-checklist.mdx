@@ -25,10 +25,11 @@ Use this checklist before moving a device or companion app from evaluation to pr
 
 ESP-IDF:
 
-- initialize NVS before Honch;
 - configure Wi-Fi and time before expecting delivery;
-- decide whether RAM-first queue loss on reset is acceptable;
-- verify GPIO helper limits if using GPIO events.
+- run `honch_tick()` or `honch_flush()` from a low-priority/non-critical task;
+- decide whether RAM-only queue loss on reset is acceptable, or provide durable `event_queue_ops`;
+- decide separately whether identity/version state needs durable `state_storage_ops`;
+- verify host-owned GPIO handoff if using GPIO events.
 
 C/POSIX:
 
@@ -49,6 +50,8 @@ Arduino ESP32:
 - treat the SDK as preview;
 - configure `rootCaPem` for HTTPS;
 - call `Honch.tick()` or `Honch.loop()` from the sketch loop;
+- decide whether RAM-only queue loss on reset is acceptable, or provide durable queue/state ops;
+- verify connectivity gating and flush spacing on product hardware;
 - run product hardware validation before production.
 
 React Native Relay:

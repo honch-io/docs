@@ -12,7 +12,7 @@ Status: Preview `0.1.0`. Use it for evaluation or controlled pilots until your p
 | Requirement | Notes |
 | --- | --- |
 | Board family | ESP32 Arduino only. |
-| Arduino core | ESP32 Arduino core with `WiFi`, `Preferences`, and `HTTPClient`. |
+| Arduino core | ESP32 Arduino core with `WiFi`, `HTTPClient`, and `WiFiClientSecure`. |
 | Network | Wi-Fi connection before flush. |
 | Project key | Sent as `X-Honch-Project-Key`. |
 | Event buffer | Caller-owned RAM buffer. |
@@ -49,18 +49,25 @@ struct HonchConfig {
   const char *apiKey;
   const char *host;
   const char *rootCaPem;
+  const char *deviceId;
   const char *deviceModel;
   const char *firmwareVersion;
   const char *environment;
   uint8_t *eventBuffer;
   size_t eventBufferSize;
   uint32_t flushIntervalSeconds;
+  uint32_t flushMinIntervalMs;
   uint32_t flushEventThreshold;
+  bool (*connectivityCallback)();
   bool insecureSkipTlsVerify;
+  const honch_state_storage_ops_t *stateStorageOps;
+  const honch_event_queue_ops_t *eventQueueOps;
 };
 ```
 
 Required fields are `apiKey`, `host`, `deviceModel`, `firmwareVersion`, `eventBuffer`, and `eventBufferSize`. Use `rootCaPem` for HTTPS endpoints. Keep `insecureSkipTlsVerify` false in production.
+
+By default, the Arduino wrapper uses only the caller-provided RAM queue. Events and generated identity/state are lost across reset or power loss unless you provide `eventQueueOps` and/or `stateStorageOps` backed by durable storage.
 
 ## First Event
 
@@ -96,6 +103,7 @@ void setup() {
   config.environment = "production";
   config.eventBuffer = eventBuffer;
   config.eventBufferSize = sizeof(eventBuffer);
+  config.flushMinIntervalMs = 10000;
   config.flushIntervalSeconds = 60;
   config.flushEventThreshold = 30;
   config.insecureSkipTlsVerify = false;
@@ -130,6 +138,7 @@ bool Honch.loop();
 bool Honch.shutdown();
 bool Honch.reset();
 const char *Honch.deviceId();
+bool Honch.queueStats(honch_queue_stats_t *stats);
 const char *Honch.lastError();
 ```
 
@@ -138,9 +147,12 @@ Call `Honch.lastError()` immediately after a failed call.
 ## Runtime Behavior
 
 - SDK platform is `arduino-esp32`.
-- Device ID is derived from the ESP32 eFuse MAC as `esp32-<12 uppercase hex chars>`.
+- Device ID uses `deviceId` when configured, otherwise it is derived from the ESP32 eFuse MAC as `esp32-<12 uppercase hex chars>`.
 - Scheduled flushing is cooperative through `Honch.tick()` or `Honch.loop()`.
-- `Honch.shutdown()` queues `$device_shutdown`, attempts a final flush, and releases the core client.
+- `Honch.tick()` and `Honch.flush()` can perform network I/O. Keep them out of ISR, UI, and other customer-critical paths.
+- Successful outbound uploads are spaced by `flushMinIntervalMs`, which defaults to `10000` ms when omitted. Use `HONCH_FLUSH_MIN_INTERVAL_DISABLED_MS` only for benchmark, factory, or explicit high-throughput modes.
+- Do not call `Honch.tick()` while Wi-Fi is offline or the radio is intentionally off. If that is hard to guarantee, provide `connectivityCallback`; when it returns false, uploads stay pending and `Honch.flush()` returns `false` with `lastError()` set to `offline` without network I/O.
+- `Honch.shutdown()` queues `$device_shutdown`, attempts a bounded final flush, and releases the core client unless the core reports `busy`.
 
 ## Security
 
@@ -153,7 +165,7 @@ arduino-cli compile --fqbn esp32:esp32:esp32 ports/arduino/examples/HonchBasic
 arduino-cli compile --fqbn esp32:esp32:esp32 ports/arduino/examples/HonchOfflineQueue
 ```
 
-Before production, verify on your product hardware that Wi-Fi, TLS, queueing before Wi-Fi, flush, retry, reset/power-cycle behavior, and Capture acceptance all work as expected.
+Before production, verify on your product hardware that Wi-Fi, TLS, queueing before Wi-Fi, connectivity gating, flush spacing, retry, reset/power-cycle behavior, and Capture acceptance all work as expected.
 
 ## Troubleshooting
 
@@ -162,5 +174,6 @@ Before production, verify on your product hardware that Wi-Fi, TLS, queueing bef
 | `Honch.begin` returns `false` | Required config fields and event buffer. |
 | `Honch.flush` returns `false` | Wi-Fi, host, TLS, project key, or retryable response. |
 | No scheduled delivery after tracking | Make sure `Honch.tick()` or `Honch.loop()` is called from `loop()`. |
+| `Honch.lastError()` is `busy` | A bounded shared lock could not be acquired; retry from normal task context. |
 | TLS fails locally | Use a proper HTTPS endpoint or intentionally disable verification only for local tests. |
-| Queue fills | Network or Capture response is retryable; reduce event volume or fix delivery. |
+| Queue fills | Network or Capture response is retryable; reduce event volume, check connectivity gating, or provide durable/custom queue ops. |

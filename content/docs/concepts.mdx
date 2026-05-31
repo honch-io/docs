@@ -52,7 +52,7 @@ The SDK does not stamp noisy values such as free heap, uptime, or hardware revis
 | Event | Trigger |
 | --- | --- |
 | `$device_boot` | Queued during initialization. |
-| `$device_shutdown` | Queued during shutdown before the final flush attempt. |
+| `$device_shutdown` | Queued during shutdown before the bounded final flush attempt. |
 | `$firmware_update` | Queued during initialization when the stored firmware version changes. |
 | `$battery_low` | Queued once when battery falls below the configured threshold, then re-armed after recovery. |
 | `$session_start` | Queued by `session_start`. |
@@ -73,17 +73,23 @@ All SDKs queue before delivery:
 
 | SDK | Storage behavior |
 | --- | --- |
-| ESP-IDF | RAM-first queue with NVS overflow. RAM-resident events can be lost on reset or power loss. |
+| ESP-IDF | RAM-only event queue by default. Events survive reset or power loss only when the host supplies durable `event_queue_ops`. |
 | C/POSIX | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory`. |
 | MicroPython | File-backed queue under `queue_directory` through `_honch_core`. |
-| Arduino ESP32 | Caller-owned RAM buffer plus platform storage through the preview wrapper. |
+| Arduino ESP32 | Caller-owned RAM queue by default. Durable queue and state storage are explicit opt-in through caller-provided ops. |
 | React Native Relay | MMKV or custom durable mobile store for relay messages and assemblies. |
+
+State persistence and event queue durability are separate concerns on embedded SDKs. State storage preserves identity and firmware-version state. Event queue storage preserves tracked events that have not yet been accepted by Capture.
 
 ## Flushing And Retry
 
-The SDK does not hide upload work in an unmanaged background thread. Call the cooperative tick API from your loop or scheduler, or call flush explicitly when you want an immediate drain attempt.
+The SDK does not hide upload work in an unmanaged background thread. Call the cooperative tick API from a scheduler or low-priority task, or call flush explicitly when you want an immediate drain attempt. On embedded targets, tick and flush can perform network I/O when uploads are enabled; keep them out of ISRs and customer-critical loops.
 
-Default retry behavior starts at 1 second, caps at 5 minutes, and applies plus or minus 25% jitter. Network failures, timeouts, `408`, `409`, `429`, and `5xx` responses are retryable. Authentication and malformed-data failures are not useful to retry unchanged.
+Default retry behavior starts at 1 second, caps at 5 minutes, and applies plus or minus 25% jitter. Network failures, timeouts, `408`, `409`, `429`, and `5xx` responses are retryable. SDKs that expose connectivity callbacks should avoid upload attempts while offline and return quickly. ESP-IDF also honors HTTP `429` `Retry-After` when Capture provides it.
+
+Direct-upload SDKs may enforce minimum spacing between outbound uploads. ESP-IDF and Arduino ESP32 default to `10000` ms between successful outbound flushes unless the host overrides the setting for benchmark, factory, or explicit high-throughput modes.
+
+Authentication and malformed-data failures are not useful to retry unchanged.
 
 ## Relay Flow
 

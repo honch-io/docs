@@ -3,7 +3,7 @@ title: Troubleshooting
 description: Diagnose queue, upload, auth, TLS, persistence, and relay issues.
 ---
 
-Start with the local SDK path before debugging dashboards. A healthy integration accepts an event, writes it to local queue state, builds a compact upload, sends `POST /capture`, and consumes or preserves the event based on Capture response.
+Start with the local SDK path before debugging dashboards. A healthy integration accepts an event, records it in the SDK queue, builds a compact upload, sends `POST /capture`, and consumes or preserves the event based on Capture response.
 
 ## Events Queue But Do Not Appear
 
@@ -11,7 +11,7 @@ Check in this order:
 
 1. SDK initialization succeeded.
 2. The event call returned success or did not raise.
-3. Local queue state exists.
+3. Local queue state exists, or the SDK reports a RAM queue depth.
 4. The endpoint is the base Capture URL and the SDK appends `/capture`.
 5. Network or Wi-Fi is connected.
 6. Device time and TLS trust are valid for HTTPS.
@@ -30,18 +30,19 @@ Check in this order:
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
 | `401` | Project key rejected. | Replace the key, restart or reinitialize if needed, send a new event, and flush again. |
-| `408`, `409`, `429`, `5xx` | Retryable transport or Capture state. | Leave the queue pending and verify backoff/recovery. |
+| `408`, `409`, `429`, `5xx` | Retryable transport or Capture state. | Leave the queue pending and verify backoff/recovery. For `429`, respect any `Retry-After` delay surfaced by the SDK or transport logs. |
 | `400`, `413`, `415`, `422` | Malformed or unsupported data. | Fix payload shape, endpoint, or SDK/server expectation; send a new event. |
 | TLS failure | Missing root CA, invalid device time, or local endpoint mismatch. | Fix certificate/time setup; do not disable verification in production. |
+| Offline status | Connectivity callback or host network state says uploads should not run. | Keep events queued, avoid tight flush loops, and resume ticking/flushing after radio recovery. |
 
 ## SDK-Specific Checks
 
 | SDK | Check |
 | --- | --- |
-| ESP-IDF | NVS initialization, Wi-Fi IP, SNTP/time, TLS bundle, event buffer, GPIO pin limits. |
+| ESP-IDF | Wi-Fi IP, SNTP/time, TLS bundle, event buffer, connectivity callback, low-priority telemetry task, durable storage hooks if configured. |
 | C/POSIX | Writable queue directory, one active client, libcurl connectivity, `pending/` and `dead/` contents. |
 | MicroPython | `_honch_core` import, wrapper import, mounted filesystem, `urequests`, memory headroom. |
-| Arduino ESP32 | Wi-Fi connection, root CA PEM, `Honch.tick()` or `Honch.loop()` in `loop()`, `Honch.lastError()` after failure. |
+| Arduino ESP32 | Wi-Fi connection, root CA PEM, `Honch.tick()` or `Honch.loop()` in `loop()`, connectivity callback, `Honch.lastError()` after failure. |
 | React Native Relay | BLE permissions, native bridge registration, frame checksum/offsets, durable store writes, ACK writes, background upload setup. |
 
 ## Do Not Retry Blindly
