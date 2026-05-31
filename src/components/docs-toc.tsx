@@ -82,7 +82,7 @@ export function DocsTableOfContents({
               item.depth === 4 && "ps-5.5",
               item.url === `#${activeHeading}`
                 ? "text-foreground before:w-0.5 before:bg-primary"
-                : "text-muted-foreground"
+                : "text-muted-foreground",
             )}
             href={item.url}
             key={item.url}

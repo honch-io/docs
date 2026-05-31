@@ -1,10 +1,10 @@
 import "./global.css";
-import { Inter } from "next/font/google";
-import type { Metadata } from "next";
 import { RootProvider } from "fumadocs-ui/provider/next";
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import { SiteHeader } from "@/components/site-header";
-import { source } from "@/lib/source";
 import { appName } from "@/lib/shared";
+import { source } from "@/lib/source";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -29,8 +29,31 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
-      <body className="relative bg-sidebar font-sans text-foreground antialiased" suppressHydrationWarning>
-        <RootProvider>
+      <body
+        className="relative bg-sidebar font-sans text-foreground antialiased"
+        suppressHydrationWarning
+      >
+        <RootProvider
+          dir="ltr"
+          search={{
+            links: [
+              ["Quickstart", "/quickstart"],
+              ["SDK concepts", "/concepts"],
+              ["FAQ", "/faq"],
+            ],
+            options: {
+              api: "/api/search",
+            },
+            preload: true,
+          }}
+          theme={{
+            attribute: "class",
+            defaultTheme: "system",
+            disableTransitionOnChange: true,
+            enableSystem: true,
+            storageKey: "honch-docs-theme",
+          }}
+        >
           <div className="relative isolate flex min-h-svh flex-col overflow-clip [--header-height:4rem]">
             {/* Decorative border lines */}
             <div

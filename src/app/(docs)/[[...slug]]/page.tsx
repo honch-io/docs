@@ -1,16 +1,23 @@
-import { notFound } from "next/navigation";
-import type { Metadata } from "next";
-import { source, getPageMarkdownUrl } from "@/lib/source";
-import { getMDXComponents } from "@/components/mdx";
-import { createRelativeLink } from "fumadocs-ui/mdx";
 import {
   MarkdownCopyButton,
   ViewOptionsPopover,
 } from "fumadocs-ui/layouts/docs/page";
+import { createRelativeLink } from "fumadocs-ui/mdx";
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import { DocsBreadcrumb } from "@/components/docs-breadcrumb";
+import {
+  DocsFeedback,
+  type DocsFeedbackPayload,
+} from "@/components/docs-feedback";
+import { DocsFooterNav } from "@/components/docs-footer-nav";
+import { DocsTableOfContents } from "@/components/docs-toc";
+import { getMDXComponents } from "@/components/mdx";
+import { SiteFooter } from "@/components/site-footer";
 import { Card, CardFrame, CardPanel } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { DocsTableOfContents } from "@/components/docs-toc";
-import { SiteFooter } from "@/components/site-footer";
+import { gitConfig } from "@/lib/shared";
+import { getPageMarkdownUrl, source } from "@/lib/source";
 
 export const revalidate = false;
 export const dynamic = "force-static";
@@ -33,6 +40,20 @@ export async function generateMetadata(props: {
   };
 }
 
+async function sendDocsFeedback(feedback: DocsFeedbackPayload) {
+  "use server";
+
+  console.info("docs feedback", feedback);
+}
+
+function getGitHubUrl(page: (typeof source)["$inferPage"]) {
+  const sourcePath = page.path.startsWith("content/")
+    ? page.path
+    : `content/docs/${page.path}`;
+
+  return `https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/${sourcePath}`;
+}
+
 export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
 }) {
@@ -42,6 +63,9 @@ export default async function Page(props: {
 
   const doc = page.data;
   const MDX = doc.body;
+  const tree = source.getPageTree();
+  const markdownUrl = getPageMarkdownUrl(page).url;
+  const githubUrl = getGitHubUrl(page);
 
   return (
     <div className="flex items-stretch xl:w-full" data-slot="docs">
@@ -52,6 +76,7 @@ export default async function Page(props: {
               <div className="mx-auto w-full max-w-3xl">
                 <div className="flex min-w-0 flex-col gap-8">
                   <div className="flex flex-col gap-2">
+                    <DocsBreadcrumb tree={tree} url={page.url} />
                     <h1 className="scroll-m-20 font-heading font-semibold text-3xl xl:text-4xl">
                       {doc.title}
                     </h1>
@@ -61,9 +86,10 @@ export default async function Page(props: {
                       </p>
                     )}
                     <div className="flex flex-row gap-2 items-center border-b pb-6 mt-2">
-                      <MarkdownCopyButton markdownUrl={getPageMarkdownUrl(page).url} />
+                      <MarkdownCopyButton markdownUrl={markdownUrl} />
                       <ViewOptionsPopover
-                        markdownUrl={getPageMarkdownUrl(page).url}
+                        githubUrl={githubUrl}
+                        markdownUrl={markdownUrl}
                       />
                     </div>
                   </div>
@@ -74,6 +100,12 @@ export default async function Page(props: {
                       })}
                     />
                   </div>
+                  <DocsFeedback
+                    onSendAction={sendDocsFeedback}
+                    title={doc.title ?? page.url}
+                    url={page.url}
+                  />
+                  <DocsFooterNav tree={tree} url={page.url} />
                 </div>
               </div>
             </CardPanel>

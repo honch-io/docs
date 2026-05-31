@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { gitConfig } from "@/lib/shared";
-import { cn } from "@/lib/cn";
 import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
+import { gitConfig } from "@/lib/shared";
 
 export function GitHubLink() {
   return (
@@ -17,6 +17,7 @@ export function GitHubLink() {
       )}
     >
       <svg
+        aria-hidden="true"
         className="size-4"
         fill="currentColor"
         viewBox="0 0 24 24"

@@ -1,15 +1,15 @@
-@import 'tailwindcss';
-@import 'cal-sans';
-@import 'fumadocs-ui/css/neutral.css';
-@import 'fumadocs-ui/css/preset.css';
+@import "tailwindcss";
+@import "cal-sans";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
 
 @custom-variant dark (&:is(.dark *));
 
 /* COSS UI Theme */
 @theme inline {
-  --font-heading: 'Cal Sans', 'Inter', sans-serif;
-  --font-sans: 'Inter', sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  --font-heading: "Cal Sans", "Inter", sans-serif;
+  --font-sans: "Inter", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-sidebar-ring: var(--sidebar-ring);

@@ -1,16 +1,15 @@
 "use client";
 
-import { MenuIcon } from "lucide-react";
-import { useState, useMemo } from "react";
-import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetPopup,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import { SidebarContext, type SidebarContextProps } from "@/components/ui/sidebar";
-import { SidebarNav } from "@/components/docs-sidebar";
 import type { Root } from "fumadocs-core/page-tree";
+import { MenuIcon } from "lucide-react";
+import { useMemo, useState } from "react";
+import { SidebarNav } from "@/components/docs-sidebar";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetPopup, SheetTrigger } from "@/components/ui/sheet";
+import {
+  SidebarContext,
+  type SidebarContextProps,
+} from "@/components/ui/sidebar";
 
 export function MobileNav({ tree }: { tree: Root }) {
   const [open, setOpen] = useState(false);

@@ -1,5 +1,6 @@
 "use client";
 
+import type { Node, Root } from "fumadocs-core/page-tree";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -12,7 +13,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import type { Root, Node } from "fumadocs-core/page-tree";
 
 function RenderNodes({
   items,
@@ -42,7 +42,11 @@ function RenderNodes({
         if (item.type === "folder") {
           return (
             <SidebarMenuItem key={item.$id}>
-              <RenderNodes items={item.children} pathname={pathname} onNavigate={onNavigate} />
+              <RenderNodes
+                items={item.children}
+                pathname={pathname}
+                onNavigate={onNavigate}
+              />
             </SidebarMenuItem>
           );
         }
@@ -52,9 +56,22 @@ function RenderNodes({
   );
 }
 
+function getNodeKey(item: Node) {
+  if (item.type === "page") {
+    return item.url;
+  }
+  if (item.type === "folder") {
+    return item.$id;
+  }
+  return String(item.name);
+}
+
 function groupBySection(tree: Root) {
   const sections: { label: React.ReactNode; items: Node[] }[] = [];
-  let current: { label: React.ReactNode; items: Node[] } = { label: null, items: [] };
+  let current: { label: React.ReactNode; items: Node[] } = {
+    label: null,
+    items: [],
+  };
 
   for (const item of tree.children) {
     if (item.type === "separator") {
@@ -85,15 +102,26 @@ export function SidebarNav({
 
   return (
     <>
-      {sections.map((section, i) => (
-        <SidebarGroup className="gap-1" key={i}>
+      {sections.map((section) => (
+        <SidebarGroup
+          className="gap-1"
+          key={
+            section.items[0]
+              ? getNodeKey(section.items[0])
+              : String(section.label)
+          }
+        >
           {section.label && (
             <SidebarGroupLabel className="h-7 px-0 text-sidebar-accent-foreground">
               {section.label}
             </SidebarGroupLabel>
           )}
           <SidebarGroupContent>
-            <RenderNodes items={section.items} pathname={pathname} onNavigate={onNavigate} />
+            <RenderNodes
+              items={section.items}
+              pathname={pathname}
+              onNavigate={onNavigate}
+            />
           </SidebarGroupContent>
         </SidebarGroup>
       ))}

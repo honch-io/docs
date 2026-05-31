@@ -1,9 +1,9 @@
 "use client";
 
-import { SearchIcon } from "lucide-react";
 import { useSearchContext } from "fumadocs-ui/contexts/search";
-import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import { SearchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 
 export function SearchToggle() {
   const { setOpenSearch } = useSearchContext();
