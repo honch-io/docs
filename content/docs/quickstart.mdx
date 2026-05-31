@@ -38,10 +38,10 @@ For local capture testing, use your local service URL as the endpoint or host. P
 Install the component from an ESP-IDF project:
 
 ```bash
-idf.py add-dependency "honch-io/honch^0.1.0"
+idf.py add-dependency "honch-io/honch^0.2.0"
 ```
 
-Initialize NVS before Honch, then track and flush:
+Initialize NVS before Honch, then track and run the cooperative flush work:
 
 ```c
 #include "honch.h"
@@ -64,13 +64,16 @@ void app_main(void)
     };
 
     if (honch_init(&config) == HONCH_OK) {
-        honch_track("app_started", "{\"source\":\"esp-idf\"}");
-        honch_flush();
+        const honch_property_t properties[] = {
+            honch_prop("source", honch_str("esp-idf")),
+        };
+        honch_track("app_started", properties, 1);
+        honch_tick();
     }
 }
 ```
 
-Expected result: init queues lifecycle events, `app_started` is queued, and `honch_flush()` attempts a compact `POST /capture` upload when the device has network connectivity.
+Expected result: init queues lifecycle events, `app_started` is queued as an HQR1 typed event record, and `honch_tick()` attempts a compact wire-v2 `POST /capture` upload when the device has network connectivity.
 
 ### C/POSIX
 
@@ -100,7 +103,11 @@ int main(void)
 
     honch_client_t *client = NULL;
     if (honch_init(&client, &config) == HONCH_OK) {
-        honch_track(client, "app_started", "{\"source\":\"posix\"}");
+        const honch_property_t properties[] = {
+            honch_prop("source", honch_str("posix")),
+        };
+        honch_track(client, "app_started", properties, 1);
+        honch_tick(client);
         honch_flush(client);
         honch_shutdown(client);
     }
@@ -132,21 +139,27 @@ client = honch.Honch(
 )
 
 client.track("app_started", {"source": "micropython"})
+client.tick()
 client.flush()
 client.shutdown()
 ```
 
-Expected result: files are created below `/honch/pending`, `/honch/dead`, and `/honch/state` as needed. Background flushing is disabled by the current user module, so call `flush()` explicitly.
+Expected result: files are created below `/honch/pending`, `/honch/dead`, and `/honch/state` as needed. Call `client.tick()` periodically from the device loop for scheduled cooperative flush work; call `flush()` when you want an immediate drain attempt.
 
 ### Arduino ESP32
 
-Use this for ESP32 Arduino sketches that call `flush()` explicitly:
+Use this for ESP32 Arduino sketches that call `Honch.tick()` or `Honch.loop()` from `loop()`:
 
 ```cpp
 #include <WiFi.h>
 #include <Honch.h>
 
 static uint8_t eventBuffer[8192];
+static const char HONCH_ROOT_CA_PEM[] = R"EOF(
+-----BEGIN CERTIFICATE-----
+REPLACE_WITH_CAPTURE_ENDPOINT_ROOT_CA
+-----END CERTIFICATE-----
+)EOF";
 
 void setup() {
   WiFi.begin("ssid", "password");
@@ -155,6 +168,7 @@ void setup() {
   HonchConfig config = {};
   config.apiKey = "project-key";
   config.host = "https://capture.honch.io";
+  config.rootCaPem = HONCH_ROOT_CA_PEM;
   config.deviceModel = "esp32-devkit";
   config.firmwareVersion = "1.0.0";
   config.environment = "production";
@@ -164,19 +178,23 @@ void setup() {
   config.flushEventThreshold = 30;
 
   if (Honch.begin(config)) {
-    Honch.track("app_started", "{\"source\":\"arduino\"}");
-    Honch.flush();
+    const honch_property_t properties[] = {
+      honch_prop("source", honch_str("arduino")),
+    };
+    Honch.track("app_started", properties, 1);
   }
 }
 
-void loop() {}
+void loop() {
+  Honch.tick();
+}
 ```
 
-Expected result: `Honch.begin()` returns `true`, the device ID is derived from the ESP32 eFuse MAC, and queue state is stored through ESP32 `Preferences`.
+Expected result: `Honch.begin()` returns `true`, the typed `app_started` event is queued, and scheduled cooperative flush work runs from `loop()`. Recent SDK production E2E notes include Arduino ESP32 device gates, but keep relay, OTA, and non-ESP32 Arduino boards out of this integration path.
 
 ### React Native Relay
 
-Use relay only when the device cannot upload directly. The firmware sends relay frames over BLE; the mobile app stores completed messages, ACKs durable receipt, and uploads to Capture.
+Use relay only when the device cannot upload directly. The firmware sends relay frames over BLE; the mobile app stores completed compact messages, ACKs durable receipt, and uploads to Capture. This is a separate relay surface, not proof of a direct firmware SDK runtime.
 
 ```ts
 import { NativeEventEmitter, NativeModules } from "react-native";

@@ -90,17 +90,17 @@ The SDK does not stamp noisy values such as free heap, uptime, or hardware revis
 
 ## Can User Properties Override SDK Properties?
 
-No. SDK-owned auto properties win over user-supplied values with the same keys. Reserved keys such as `$device_id`, `$sdk_platform`, `$sdk_version`, and `$session_id` should be treated as SDK-owned.
+No. SDK-owned auto properties are reserved. User-supplied values with keys such as `$device_id`, `$sdk_platform`, `$sdk_version`, `$environment`, `$session_id`, `$battery_level`, or `$wifi_rssi` are rejected before queueing.
 
 If you need a custom version of one of those values, use a different property name.
 
 ## What Property Format Should I Pass?
 
-C, ESP-IDF, and Arduino accept JSON strings. C/POSIX and MicroPython validate JSON-shaped public inputs at the API boundary. MicroPython accepts dictionaries and JSON-compatible values, then serializes them before calling `_honch_core`.
+C/POSIX, ESP-IDF, and Arduino use typed `honch_property_t` arrays. Build values with helpers such as `honch_str`, `honch_i64`, `honch_u64`, `honch_bool`, `honch_f64`, `honch_array`, and `honch_map`. MicroPython accepts dictionaries containing typed values and passes them to the `_honch_core` user C module.
 
 Rules that avoid most problems:
 
-- Use JSON objects for event properties and identify traits.
+- Use typed property values for event properties and identify traits.
 - Keep event names stable and short.
 - Keep property names stable across firmware versions.
 - Avoid large nested blobs.
@@ -117,7 +117,7 @@ Durability varies by SDK:
 | ESP-IDF | RAM-first queue with NVS overflow. Permanent capture rejections are consumed rather than written to NVS dead-letter storage. RAM-resident events can be lost on reset. |
 | C/POSIX | File-backed queue under `queue_directory`. |
 | MicroPython | File-backed queue under `queue_directory`. |
-| Arduino ESP32 | ESP32 `Preferences` queue. |
+| Arduino ESP32 | Canonical core queue through the Arduino wrapper, backed by caller-owned RAM and platform storage. |
 | React Native Relay | MMKV or custom durable mobile store. |
 
 ## What Happens On Reset?
@@ -138,6 +138,10 @@ import honch
 ```
 
 Both imports should succeed before you debug client configuration.
+
+## Does The SDK Flush In The Background?
+
+The portable core does not start a hidden background thread. Call the cooperative tick API from your application loop or scheduler: `honch_tick()` for C/POSIX and ESP-IDF, `Honch.tick()` or `Honch.loop()` for Arduino ESP32, and `client.tick()` for MicroPython. Explicit `flush()` remains available when you want to attempt delivery immediately.
 
 ## Can I Call `track` From An ISR?
 

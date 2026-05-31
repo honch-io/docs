@@ -20,13 +20,13 @@ Do not start by adding every product event. First prove that one event can queue
 
 | SDK | Status | Use it for | Guide |
 | --- | --- | --- | --- |
-| ESP-IDF | Available, component version `0.1.0` | ESP32-family products built with ESP-IDF. | [ESP-IDF](/sdks/esp-idf) |
+| ESP-IDF | Available, component version `0.2.0` | ESP32-family products built with ESP-IDF. | [ESP-IDF](/sdks/esp-idf) |
 | C/POSIX | Available, Shared Core behavior `0.2.0` | Embedded Linux devices, local development harnesses, and visible queue inspection. | [C/POSIX](/sdks/c-posix) |
 | MicroPython | Available, Shared Core behavior `0.2.0` | Firmware that can include the `_honch_core` MicroPython user C module. | [MicroPython](/sdks/micropython) |
-| Arduino ESP32 | In progress, library version `0.1.0` | ESP32 Arduino sketches using the current wrapper and explicit flush calls. | [Arduino ESP32](/sdks/arduino) |
+| Arduino ESP32 | In progress, canonical core wrapper | ESP32 Arduino sketches using typed properties and cooperative `Honch.tick()` / `Honch.loop()`. | [Arduino ESP32](/sdks/arduino) |
 | React Native Relay | In progress, package version `0.1.0` | Companion apps that receive relay chunks from offline devices and upload them later. | [React Native Relay](/sdks/react-native-relay) |
 
-Shared Core is the source of truth for common SDK behavior: event semantics, identity, lifecycle events, queue policy, retry classification, compact upload encoding, and relay packetization. Platform ports provide storage, transport, timing, randomness, and platform-specific integration.
+Shared Core is the source of truth for common SDK behavior: typed event semantics, identity, lifecycle events, HQR1 queue records, queue policy, retry classification, compact wire-v2 upload encoding, and relay packetization. ESP-IDF, C/POSIX, MicroPython, and Arduino ESP32 align around that core. Platform ports provide storage, transport, timing, randomness, and platform-specific integration.
 
 ## What You Should Verify First
 
@@ -44,7 +44,7 @@ Once those are true, add product events, identity, sessions, battery, connectivi
 
 ## What Every SDK Sends
 
-Each event has an event name, a timestamp, a `distinct_id`, and properties. SDK-owned properties such as `$device_id`, `$device_model`, `$firmware_version`, `$sdk_platform`, `$sdk_version`, and `$environment` are added automatically and win over user-supplied values with the same keys.
+Each event has an event name, an on-device timestamp, a `distinct_id`, and typed properties. SDK-owned context such as `$device_id`, `$device_model`, `$firmware_version`, `$sdk_platform`, `$sdk_version`, and `$environment` is added automatically. User-supplied values with reserved SDK keys are rejected before queueing.
 
 SDKs also emit lifecycle events where the platform supports them:
 
@@ -76,6 +76,6 @@ Capture also accepts the same compact chunk format on `/e` and `/chunks`. Use th
   <Card title="ESP-IDF" href="/sdks/esp-idf" description="Install the ESP-IDF component, initialize NVS, track events, and verify hardware logs." />
   <Card title="C/POSIX" href="/sdks/c-posix" description="Build locally, inspect queue files, and confirm capture uploads." />
   <Card title="MicroPython" href="/sdks/micropython" description="Build firmware with _honch_core and validate the Python wrapper." />
-  <Card title="Arduino ESP32" href="/sdks/arduino" description="Use the in-progress Arduino wrapper with explicit flushes." />
+  <Card title="Arduino ESP32" href="/sdks/arduino" description="Use the in-progress Arduino wrapper with cooperative tick flushing." />
   <Card title="FAQ" href="/faq" description="Troubleshoot queue, auth, transport, identity, and relay failures." />
 </Cards>

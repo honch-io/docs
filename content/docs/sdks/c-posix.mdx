@@ -58,7 +58,6 @@ typedef struct honch_config {
     size_t flush_event_threshold;
     unsigned int flush_retry_initial_ms;
     unsigned int flush_retry_max_ms;
-    int disable_background_flush;
     int (*battery_callback)(void);
     int battery_low_threshold;
     honch_auto_properties_fn auto_properties_callback;
@@ -89,7 +88,7 @@ Common defaults:
 | `flush_event_threshold` | `30`. |
 | `durability_mode` | `HONCH_DURABILITY_SYNC_ALWAYS`. |
 
-Set `disable_background_flush` nonzero when you want explicit `honch_flush` calls to be the only delivery trigger.
+There is no background flush thread in the portable core. Call `honch_tick()` periodically from your main loop or scheduler for bounded cooperative flush work, and call `honch_flush()` when you want an immediate drain attempt.
 
 ## 3. Send A First Event
 
@@ -114,7 +113,11 @@ int main(void)
         return 1;
     }
 
-    honch_track(client, "app_started", "{\"source\":\"posix\"}");
+    const honch_property_t properties[] = {
+        honch_prop("source", honch_str("posix")),
+    };
+    honch_track(client, "app_started", properties, 1);
+    honch_tick(client);
     honch_flush(client);
     honch_shutdown(client);
 }
@@ -131,25 +134,33 @@ Expected result:
 ## 4. Add Identity And Sessions
 
 ```c
-honch_identify(client, "account-123", "{\"plan\":\"beta\"}");
+const honch_property_t traits[] = {
+    honch_prop("plan", honch_str("beta")),
+};
+honch_identify(client, "account-123", traits, 1);
 
 honch_session_start(client, "recording");
-honch_track(client, "recording_started", "{\"mode\":\"hdr\"}");
+const honch_property_t properties[] = {
+    honch_prop("mode", honch_str("hdr")),
+};
+honch_track(client, "recording_started", properties, 1);
 honch_session_end(client);
 ```
 
 Expected result: events after `identify` use the new `distinct_id`, and events tracked during a session include `$session_id`.
 
-## 5. Validate JSON Inputs
+## 5. Validate Typed Inputs
 
 Rules:
 
-- `properties_json` and `traits_json` must be JSON objects.
-- `value_json` in `honch_set_property` can be any valid JSON value.
+- Event properties and identify traits use typed `honch_property_t` arrays.
+- `honch_set_property` accepts one typed `honch_value_t`.
+- Use helpers such as `honch_str`, `honch_i64`, `honch_u64`, `honch_bool`, `honch_f64`, `honch_array`, and `honch_map`.
+- SDK-owned keys such as `$device_id`, `$sdk_platform`, `$sdk_version`, and `$session_id` are rejected before queueing.
 - Event names must be nonblank and no longer than 128 characters.
 - Distinct IDs must be nonblank and no longer than 256 characters.
 
-Invalid input returns `HONCH_ERROR_INVALID_ARGUMENT`. The POSIX SDK fails closed instead of silently dropping malformed properties.
+Invalid input returns `HONCH_ERROR_INVALID_ARGUMENT`. The POSIX SDK fails closed instead of silently dropping malformed properties. Strings and keys must be valid UTF-8, map keys must be unique, and non-finite floats are rejected.
 
 ## 6. Inspect Local Storage
 
@@ -186,6 +197,8 @@ X-Honch-Stream-Id: <stream_id>
 ```
 
 Use HTTPS in production. Local development can use HTTP only when you intentionally point the endpoint at a local Capture service.
+
+Queued events are stored as HQR1 typed event records. Flush encodes wire-v2 compact event messages, strips promoted context properties from each event, and sends chunk frames to Capture. Event timestamps represent the on-device event time recorded when `honch_track` was called; boot-relative timestamps are normalized once realtime is available.
 
 ## 8. Run Examples
 

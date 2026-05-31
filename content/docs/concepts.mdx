@@ -14,9 +14,9 @@ Each event contains:
 | `event` | Event name, up to 128 characters in the Shared Core SDKs. |
 | `distinct_id` | The analytics identity attached to the event. Defaults to the device ID. |
 | `timestamp` | Assigned when the SDK tracks the event. |
-| `properties` | JSON-compatible custom properties plus SDK-owned automatic properties. |
+| `properties` | Typed custom properties plus SDK-owned automatic context expanded by Capture. |
 
-User properties are accepted as JSON strings in C, ESP-IDF, and Arduino, and as dictionaries or JSON-compatible values in MicroPython. The C/POSIX and MicroPython wrappers fail closed on malformed JSON. SDK-owned properties override user values with the same keys.
+Public event APIs accept typed values. C-derived ports use `honch_property_t` with helpers such as `honch_str`, `honch_i64`, `honch_bool`, arrays, and maps. MicroPython accepts dictionaries containing typed values such as `None`, `bool`, `int`, `float`, `str`, `bytes`, lists, and dictionaries with string keys. SDK-owned property keys supplied by users are rejected before queueing so application input cannot spoof SDK context.
 
 ## Identity
 
@@ -31,7 +31,7 @@ The SDK tracks two IDs:
 
 ## Automatic Properties
 
-Every event includes:
+Every event carries this SDK-owned context:
 
 | Property | When |
 | --- | --- |
@@ -45,7 +45,7 @@ Every event includes:
 | `$battery_level` | Only when a battery callback is configured and returns `0`-`100`. |
 | `$wifi_rssi` | Only on embedded SDKs that can read Wi-Fi signal strength. |
 
-The SDK explicitly does not stamp noisy values such as free heap, uptime, or hardware revision on every event.
+Promoted context properties are encoded once in the wire-v2 message context and stripped from each queued event's property set before wire encoding. Capture expands that context back into each event after decoding. The SDK explicitly does not stamp noisy values such as free heap, uptime, or hardware revision on every event.
 
 ## Lifecycle Events
 
@@ -78,12 +78,12 @@ Durability depends on the port:
 | ESP-IDF | RAM-first queue backed by a caller-provided buffer, with NVS used for overflow. Permanent capture rejections are consumed rather than written to NVS dead-letter storage. RAM-resident events can be lost on reset or power loss. |
 | C/POSIX | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory`; default durability fsyncs queued events. |
 | MicroPython | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory` through the user C module. |
-| Arduino ESP32 | Preferences-backed state and queue. |
+| Arduino ESP32 | Canonical core queue through the Arduino wrapper, backed by caller-owned RAM and platform storage. |
 | React Native Relay | MMKV or custom durable store for completed relay messages and incomplete chunk assemblies. |
 
 ## Flushing And Retry
 
-The Shared Core SDKs default to a 60 second flush interval, a 30 event flush threshold, batches of 20 events capped at 50, 1 second initial backoff, and 5 minute max backoff. Retry jitter is plus or minus 25%.
+The core does not start a hidden background thread. Call the cooperative tick API from your scheduler or firmware loop: `honch_tick()`, `Honch.tick()`, `Honch.loop()`, or `client.tick()` depending on the port. The Shared Core SDKs default to a 60 second flush interval, a 30 event flush threshold, batches of 20 events capped at 50, 1 second initial backoff, and 5 minute max backoff. Retry jitter is plus or minus 25%.
 
 Response handling follows the shared upload policy:
 
@@ -97,7 +97,7 @@ Response handling follows the shared upload policy:
 
 ## Compact Upload Format
 
-SDKs upload compact chunk frames:
+SDKs store queued events as HQR1 typed event records, then encode wire-v2 compact event messages for upload. SDK transports send compact chunk frames:
 
 ```text
 POST /capture
@@ -110,6 +110,8 @@ The project key is a transport credential, not part of the device message body. 
 
 You do not need to construct the compact message by hand when using an SDK. Treat it as the SDK-owned upload payload; configure the endpoint and project key, then let the SDK handle encoding, chunking, retries, and validation responses.
 
+Event timestamps represent on-device event time from when `track` is called. If an event was queued while only boot-relative time was available, the SDK normalizes that timestamp once realtime becomes valid and marks the batch context with the device time source.
+
 ## Relay Flow
 
 Relay is for devices that cannot upload directly. Firmware splits a queued compact message into relay chunks. A gateway or companion app:
@@ -120,7 +122,7 @@ Relay is for devices that cannot upload directly. Firmware splits a queued compa
 4. ACKs the firmware only after durable receipt;
 5. uploads the compact message to `/capture` with relay headers.
 
-React Native Relay implements this mobile side for iOS and Android hosts.
+React Native Relay implements this mobile relay side for iOS and Android hosts. It is a separate relay surface; it does not prove the direct SDK runtime on firmware or embedded Linux.
 
 ## Integration Check
 

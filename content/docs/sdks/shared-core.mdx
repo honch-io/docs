@@ -8,14 +8,14 @@ Shared Core lives in `core/` in the SDK repository. Product applications normall
 ## What The Core Owns
 
 - public event semantics;
-- strict input validation for event names, identities, and JSON-shaped inputs;
-- local queue-entry construction before compact upload encoding;
+- strict input validation for event names, identities, typed properties, and reserved SDK-owned keys;
+- HQR1 typed queue-entry construction before compact upload encoding;
 - SDK-owned automatic properties;
 - identify, set-property, sessions, reset, boot, shutdown, firmware update, and battery-low events;
 - queue limit policy and drop-oldest behavior;
 - retry classification and backoff timing;
-- compact event batch encoding;
-- compact chunk frame generation;
+- wire-v2 compact event batch encoding;
+- compact chunk frame generation for `POST /capture`;
 - relay chunk generation support.
 
 Platform SDKs own platform details: storage, transport, time, randomness, locking, logging, Wi-Fi or BLE state, and any board-specific behavior.
@@ -24,11 +24,20 @@ Platform SDKs own platform details: storage, transport, time, randomness, lockin
 
 ```c
 honch_status_t honch_core_init(honch_client_t **client, const honch_core_config_t *config);
-honch_status_t honch_core_track(honch_client_t *client, const char *event_name, const char *properties_json);
-honch_status_t honch_core_identify(honch_client_t *client, const char *distinct_id, const char *traits_json);
-honch_status_t honch_core_set_property(honch_client_t *client, const char *key, const char *value_json);
+honch_status_t honch_core_track(
+    honch_client_t *client,
+    const char *event_name,
+    const honch_property_t *properties,
+    size_t property_count);
+honch_status_t honch_core_identify(
+    honch_client_t *client,
+    const char *distinct_id,
+    const honch_property_t *traits,
+    size_t trait_count);
+honch_status_t honch_core_set_property(honch_client_t *client, const char *key, honch_value_t value);
 honch_status_t honch_core_session_start(honch_client_t *client, const char *session_name);
 honch_status_t honch_core_session_end(honch_client_t *client);
+honch_status_t honch_core_tick(honch_client_t *client);
 honch_status_t honch_core_flush(honch_client_t *client);
 honch_status_t honch_core_reset(honch_client_t *client);
 honch_status_t honch_core_shutdown(honch_client_t *client);
@@ -36,6 +45,8 @@ const char *honch_core_get_device_id(honch_client_t *client);
 honch_status_t honch_core_copy_device_id(honch_client_t *client, char *buffer, size_t buffer_size);
 const char *honch_status_string(honch_status_t status);
 ```
+
+Build values with helpers such as `honch_null`, `honch_bool`, `honch_u64`, `honch_i64`, `honch_f32`, `honch_f64`, `honch_str`, `honch_bytes`, `honch_array`, `honch_map`, and `honch_prop`.
 
 ## Core Config
 
@@ -67,14 +78,14 @@ Common optional fields:
 | `flush_retry_max_ms` | `300000`. |
 | `battery_low_threshold` | `15`. |
 
-`disable_background_flush` keeps events queued until explicit `flush` calls. `battery_callback` can return `0`-`100` or a negative value when unknown. `auto_properties_callback` lets a platform SDK add validated properties such as `$wifi_rssi`.
+There is no hidden background thread in the portable core. Ports call `honch_core_tick()` from their scheduler or expose an equivalent public tick API. `battery_callback` can return `0`-`100` or a negative value when unknown. `auto_properties_callback` lets a platform SDK add validated properties such as `$wifi_rssi`.
 
 ## Status Codes
 
 | Status | Meaning |
 | --- | --- |
 | `HONCH_STATUS_OK` | Operation succeeded. |
-| `HONCH_STATUS_ERROR_INVALID_ARGUMENT` | Bad config, event name, identity, JSON input, or buffer. |
+| `HONCH_STATUS_ERROR_INVALID_ARGUMENT` | Bad config, event name, identity, typed property input, or buffer. |
 | `HONCH_STATUS_ERROR_OUT_OF_MEMORY` | Allocation failed. |
 | `HONCH_STATUS_ERROR_IO` | Storage or platform I/O failed. |
 | `HONCH_STATUS_ERROR_TRANSPORT` | Transport failed. |
@@ -86,6 +97,7 @@ Common optional fields:
 | `HONCH_STATUS_ERROR_QUEUE_FULL` | Storage could not queue the event. |
 | `HONCH_STATUS_ERROR_TIMEOUT` | Transport timed out. |
 | `HONCH_STATUS_ERROR_INTERNAL` | Unexpected internal failure. |
+| `HONCH_STATUS_ERROR_BUSY` | Operation cannot proceed because the client or queue is busy. |
 
 ## Platform Interfaces
 
@@ -98,6 +110,10 @@ Shared Core depends on three platform interface tables:
 | `honch_transport_ops_t` | post one compact chunk frame to Capture and classify the result. |
 
 Platform integrations should keep SDK behavior platform-neutral. Board-specific GPIO, Wi-Fi, BLE, battery, TLS, or filesystem choices belong in the platform SDK, not in Shared Core.
+
+Queued event timestamps are on-device event time from `track`, not upload time. When only boot-relative time is available at queue time, flush normalizes timestamps after realtime becomes valid and marks the wire-v2 batch context with `device_time_source`.
+
+Promoted context fields such as `$device_id`, `$device_model`, `$firmware_version`, `$sdk_platform`, `$sdk_version`, `$environment`, and `$session_id` are represented once in wire-v2 message context. They are stripped from per-event properties before wire encoding and expanded by Capture after decode.
 
 ## Relay Chunks
 

@@ -5,7 +5,7 @@ description: Install, configure, verify, and troubleshoot Honch in ESP32 firmwar
 
 The ESP-IDF SDK is the production ESP32 component. It uses Shared Core behavior with ESP-IDF integration for NVS, HTTP, Wi-Fi metadata, time, randomness, FreeRTOS locking, and GPIO edge tracking.
 
-Status: available as component version `0.1.0`, built on shared SDK behavior version `0.2.0`.
+Status: available as component version `0.2.0`, built on shared SDK behavior version `0.2.0`.
 
 ## Before You Start
 
@@ -20,14 +20,14 @@ You need:
 | Project key | Sent as `X-Honch-Project-Key`. |
 | Event buffer | Caller-owned RAM buffer, recommend at least `8192` bytes. |
 
-The component depends on ESP-IDF packages for NVS, HTTP client, Wi-Fi, event loop, TLS certificate bundle, timers, pthread support, GPIO, and JSON parsing.
+The component depends on ESP-IDF packages for NVS, HTTP client, Wi-Fi, event loop, TLS certificate bundle, timers, locking, and GPIO. The public event API uses typed properties from the canonical C core.
 
 ## 1. Install The Component
 
 Use ESP Component Manager:
 
 ```bash
-idf.py add-dependency "honch-io/honch^0.1.0"
+idf.py add-dependency "honch-io/honch^0.2.0"
 ```
 
 Or vendor the SDK repository:
@@ -57,6 +57,7 @@ typedef struct {
     uint32_t flush_event_threshold;
     int (*battery_callback)(void);
     int battery_low_threshold;
+    honch_durability_mode_t durability_mode;
 } honch_config_t;
 ```
 
@@ -80,6 +81,7 @@ Optional fields:
 | `flush_event_threshold` | `30` |
 | `battery_callback` | `NULL` |
 | `battery_low_threshold` | `15` |
+| `durability_mode` | `HONCH_DURABILITY_OS_BUFFERED` |
 
 Config strings are copied into internal buffers during init. Keep values short, stable, and useful for filtering.
 
@@ -117,8 +119,11 @@ void app_main(void)
         return;
     }
 
-    honch_track("app_started", "{\"source\":\"esp-idf\"}");
-    honch_flush();
+    const honch_property_t properties[] = {
+        honch_prop("source", honch_str("esp-idf")),
+    };
+    honch_track("app_started", properties, 1);
+    honch_tick();
 }
 ```
 
@@ -129,39 +134,53 @@ Expected result after `honch_init`:
 - firmware version is compared against persisted state;
 - RAM-first/NVS storage is ready;
 - HTTP transport is ready;
-- background flushing starts;
+- cooperative flush state is ready for `honch_tick()`;
 - the GPIO worker task starts.
 
 ## 4. Track Custom Events
 
 ```c
-honch_track("button_pressed", "{\"pin\":0,\"source\":\"boot_button\"}");
-honch_track("mode_changed", "{\"mode\":\"recording\"}");
-honch_flush();
+const honch_property_t button_properties[] = {
+    honch_prop("pin", honch_i64(0)),
+    honch_prop("source", honch_str("boot_button")),
+};
+honch_track("button_pressed", button_properties, 2);
+
+const honch_property_t mode_properties[] = {
+    honch_prop("mode", honch_str("recording")),
+};
+honch_track("mode_changed", mode_properties, 1);
+honch_tick();
 ```
 
 Rules:
 
-- `properties_json` must be a JSON object string.
-- Invalid JSON returns `HONCH_ERR_INVALID_ARG`.
-- SDK-owned properties such as `$device_id`, `$sdk_version`, and `$session_id` win over user properties with the same keys.
+- Properties use typed `honch_property_t` values.
+- Invalid typed input returns `HONCH_ERR_INVALID_ARG`.
+- SDK-owned properties such as `$device_id`, `$sdk_version`, and `$session_id` are rejected when supplied by users.
 - Do not call `honch_track` directly from ISR context.
 
-Expected result: events are queued immediately. Delivery happens on explicit `honch_flush`, flush threshold, or flush interval when network is available.
+Expected result: events are queued immediately. Delivery happens on explicit `honch_flush` or through cooperative `honch_tick()` when the flush threshold or interval is reached and network is available.
 
 ## 5. Add Identity And Sessions
 
 Use identity when you want analytics to follow an account, installation, or user-facing owner:
 
 ```c
-honch_identify("account-123", "{\"plan\":\"beta\"}");
+const honch_property_t traits[] = {
+    honch_prop("plan", honch_str("beta")),
+};
+honch_identify("account-123", traits, 1);
 ```
 
 Use sessions to group bounded flows:
 
 ```c
 honch_session_start("calibration");
-honch_track("calibration_step", "{\"step\":1}");
+const honch_property_t step_properties[] = {
+    honch_prop("step", honch_i64(1)),
+};
+honch_track("calibration_step", step_properties, 1);
 honch_session_end();
 ```
 
@@ -235,6 +254,8 @@ Response handling:
 | `204` | Full message accepted. |
 | `401` | Auth failure; do not retry the same message indefinitely. |
 | `408`, `409`, `429`, `5xx`, network errors | Retry with backoff. |
+
+Queued events use HQR1 typed event records. Flush encodes wire-v2 compact event messages and sends chunk frames to Capture. Promoted context properties are encoded once in message context rather than duplicated into every event property set. Event timestamps represent device event time; boot-relative timestamps are normalized when realtime becomes valid.
 
 ## Troubleshooting
 

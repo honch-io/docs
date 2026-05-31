@@ -80,7 +80,7 @@ Useful options:
 | `max_queued_events` | `1000`. |
 | `max_event_bytes` | `16384`. |
 | `transport_timeout_ms` | `10000`. |
-| `flush_interval_seconds` | `60` in wrapper config, but background flush is disabled by the current user module. |
+| `flush_interval_seconds` | `60`; used by cooperative `client.tick()` scheduling. |
 | `flush_event_threshold` | `30`. |
 | `battery_low_threshold` | `15`. |
 
@@ -111,7 +111,7 @@ Expected result:
 - permanent rejections move attempted events to `/honch/dead`;
 - accepted events are consumed.
 
-Call `flush()` explicitly. The current user module disables background flushing even though the Python config object exposes interval and threshold fields.
+Call `client.tick()` periodically from the device main loop for scheduled cooperative flush work. Call `flush()` explicitly when you want to drain immediately.
 
 ## 6. Add Identity, Sessions, And Connectivity
 
@@ -156,7 +156,7 @@ Check these before adding more events:
 4. Queue files appear below `queue_directory`.
 5. `flush()` reaches the configured endpoint or leaves retryable files pending.
 
-The transport imports `urequests` and sends compact chunks to:
+The C user module owns storage and transport adapters. It stores queued events as HQR1 typed event records, encodes wire-v2 compact event messages, and sends compact chunks to:
 
 ```text
 POST <endpoint_url>/capture
