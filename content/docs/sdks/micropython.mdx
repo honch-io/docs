@@ -14,7 +14,7 @@ Status: Stable `0.2.0`.
 | MicroPython checkout | Build firmware from source for the target port. |
 | Honch user module | `ports/micropython/usermod/honch/micropython.cmake`. |
 | Python wrapper | Freeze through `manifest.py` or install with `mip` after firmware includes `_honch_core`. |
-| Queue directory | Writable filesystem path on the device. |
+| Event buffer | Caller-provided writable `bytearray` used for the volatile event queue. |
 | Network stack | Board-specific; transport imports `urequests`. |
 | Project key | Sent as `X-Honch-Project-Key`. |
 
@@ -47,21 +47,24 @@ Expected result: `import honch` succeeds.
 
 ## Configure
 
-Required options are `api_key`, `endpoint_url`, `device_model`, `firmware_version`, and `queue_directory`.
+Required options are `api_key`, `endpoint_url`, `device_id`, `device_model`, `firmware_version`, and `event_buffer`.
 
 Useful options:
 
 | Option | Default |
 | --- | --- |
-| `device_id` | Generated and persisted when omitted. |
 | `environment` | `production`. |
 | `batch_size` | `20`, capped at `50`. |
 | `max_queued_events` | `1000`. |
 | `max_event_bytes` | `16384`. |
 | `transport_timeout_ms` | `10000`. |
 | `flush_interval_seconds` | `60`. |
+| `flush_min_interval_ms` | `10000`; use `0xFFFFFFFF` only for benchmark or explicit high-throughput modes. |
 | `flush_event_threshold` | `30`. |
+| `flush_retry_initial_ms` | `1000`. |
+| `flush_retry_max_ms` | `300000`. |
 | `battery_low_threshold` | `15`. |
+| `connectivity_callback` | Optional fast callback; return false while offline. |
 
 Python `platform=`, `transport=`, `battery_callback=`, and `auto_properties_callback=` hooks are rejected. Board behavior belongs in the C user module.
 
@@ -73,9 +76,10 @@ import honch
 client = honch.Honch(
     api_key="project-key",
     endpoint_url="https://capture.honch.io",
+    device_id="device-serial-001",
     device_model="pico-w",
     firmware_version="1.0.0",
-    queue_directory="/honch",
+    event_buffer=bytearray(8192),
 )
 
 client.track("app_started", {"source": "micropython"})
@@ -118,16 +122,9 @@ The wrapper maps core statuses into Python exceptions:
 
 ## Persistence
 
-Choose a queue directory on a filesystem that survives reboot:
+The default user C module stores queued events in the caller-provided `event_buffer`. Events, `identify()` state, and firmware-version state are volatile by default and are lost across reset or power loss.
 
-```text
-/honch/
-  pending/
-  dead/
-  state/
-```
-
-The SDK creates subdirectories and files as needed.
+`device_id` is required because this port does not persist SDK identity. Pass a stable ID from board provisioning, NVS, a filesystem file, or another product-owned durable source.
 
 ## Security
 
@@ -140,7 +137,7 @@ Check these before adding more events:
 1. `import _honch_core` succeeds.
 2. `import honch` succeeds.
 3. Client creation does not raise.
-4. Queue files appear below `queue_directory`.
+4. `queue_stats()` reports RAM queue capacity from `event_buffer`.
 5. `flush()` reaches the endpoint or leaves retryable files pending.
 
 ## Troubleshooting

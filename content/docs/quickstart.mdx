@@ -127,9 +127,10 @@ import honch
 client = honch.Honch(
     api_key="project-key",
     endpoint_url="https://capture.honch.io",
+    device_id="device-serial-001",
     device_model="pico-w",
     firmware_version="1.0.0",
-    queue_directory="/honch",
+    event_buffer=bytearray(8192),
 )
 
 client.track("app_started", {"source": "micropython"})

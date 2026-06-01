@@ -75,7 +75,7 @@ All SDKs queue before delivery:
 | --- | --- |
 | ESP-IDF | RAM-only event queue by default. Events survive reset or power loss only when the host supplies durable `event_queue_ops`. |
 | C/POSIX | File-backed `pending/`, `dead/`, and `state/` directories under `queue_directory`. |
-| MicroPython | File-backed queue under `queue_directory` through `_honch_core`. |
+| MicroPython | Caller-provided RAM `event_buffer` through `_honch_core`; events and identity state are volatile unless the application supplies its own durable source for the required `device_id`. |
 | Arduino ESP32 | Caller-owned RAM queue by default. Durable queue and state storage are explicit opt-in through caller-provided ops. |
 | React Native Relay | MMKV or custom durable mobile store for relay messages and assemblies. |
 

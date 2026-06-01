@@ -60,7 +60,17 @@ import { createMmkvRelayStore } from "@honch/react-native-relay";
 const durableStore = createMmkvRelayStore(createMMKV({ id: "honch-relay" }));
 ```
 
-The MMKV store keeps incomplete assemblies and completed messages until Capture accepts them or the relay permanently drops them.
+The MMKV store writes per-chunk and per-message records with a small index. By default, it retains up to `4096` chunks and `1024` completed messages for seven days, then drops the oldest or expired entries to bound offline growth. Override those limits when the host app has a smaller storage budget:
+
+```ts
+const durableStore = createMmkvRelayStore(createMMKV({ id: "honch-relay" }), {
+  maxChunks: 1024,
+  maxCompleteMessages: 256,
+  ttlMs: 3 * 24 * 60 * 60 * 1000,
+});
+```
+
+Completed messages and incomplete assemblies remain pending across app restarts until Capture accepts or permanently rejects them, unless they age out or configured queue bounds require dropping oldest state.
 
 ## Wire The Relay
 
@@ -133,6 +143,15 @@ Android:
 - Request `ACCESS_FINE_LOCATION` where required for BLE scanning.
 - Include `androidx.work:work-runtime` for scheduled upload drains.
 - Register the package through the consuming Android host app.
+- Register a headless JS task named `HonchRelayUpload` that calls the same durable queue drain path used by foreground upload drains.
+
+```ts
+import { AppRegistry } from "react-native";
+
+AppRegistry.registerHeadlessTask("HonchRelayUpload", () => async () => {
+  await relay.drainUploads();
+});
+```
 
 ## Security
 

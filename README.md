@@ -14,7 +14,7 @@ npm run lint
 
 `npm run types:check` regenerates Fumadocs/Next.js generated files and runs TypeScript with `tsc --noEmit`.
 
-`npm run lint` runs Biome. At the time of the source audit, this command reports existing Biome/Tailwind/import-format diagnostics that are separate from the SDK docs content.
+`npm run lint` runs Biome.
 
 ## Content
 
@@ -23,5 +23,3 @@ overview, quickstart, shared SDK concepts, FAQ, shared C core, ESP-IDF,
 C/POSIX, MicroPython, Arduino ESP32, and React Native Relay.
 
 The docs source is configured in `source.config.ts` and loaded by `src/lib/source.ts`.
-
-The SDK accuracy audit lives in `DOCS_SOURCE_AUDIT.md`.

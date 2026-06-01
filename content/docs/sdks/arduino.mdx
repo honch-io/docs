@@ -62,6 +62,7 @@ struct HonchConfig {
   bool insecureSkipTlsVerify;
   const honch_state_storage_ops_t *stateStorageOps;
   const honch_event_queue_ops_t *eventQueueOps;
+  uint32_t transportTimeoutMs;
 };
 ```
 
@@ -106,6 +107,7 @@ void setup() {
   config.flushMinIntervalMs = 10000;
   config.flushIntervalSeconds = 60;
   config.flushEventThreshold = 30;
+  config.transportTimeoutMs = 3000;
   config.insecureSkipTlsVerify = false;
 
   if (Honch.begin(config)) {
@@ -151,6 +153,7 @@ Call `Honch.lastError()` immediately after a failed call.
 - Scheduled flushing is cooperative through `Honch.tick()` or `Honch.loop()`.
 - `Honch.tick()` and `Honch.flush()` can perform network I/O. Keep them out of ISR, UI, and other customer-critical paths.
 - Successful outbound uploads are spaced by `flushMinIntervalMs`, which defaults to `10000` ms when omitted. Use `HONCH_FLUSH_MIN_INTERVAL_DISABLED_MS` only for benchmark, factory, or explicit high-throughput modes.
+- Each synchronous HTTP POST is bounded by `transportTimeoutMs`, which defaults to `3000` ms when omitted.
 - Do not call `Honch.tick()` while Wi-Fi is offline or the radio is intentionally off. If that is hard to guarantee, provide `connectivityCallback`; when it returns false, uploads stay pending and `Honch.flush()` returns `false` with `lastError()` set to `offline` without network I/O.
 - `Honch.shutdown()` queues `$device_shutdown`, attempts a bounded final flush, and releases the core client unless the core reports `busy`.
 

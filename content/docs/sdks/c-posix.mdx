@@ -44,8 +44,11 @@ Common defaults:
 | `max_event_bytes` | `16384`. |
 | `transport_timeout_ms` | `10000`. |
 | `flush_interval_seconds` | `60`. |
+| `flush_min_interval_ms` | `10000`; use `HONCH_FLUSH_MIN_INTERVAL_DISABLED_MS` only for benchmarks. |
 | `flush_event_threshold` | `30`. |
-| `durability_mode` | `HONCH_DURABILITY_SYNC_ALWAYS`. |
+| `flush_retry_initial_ms` | `1000`. |
+| `flush_retry_max_ms` | `300000`. |
+| `durability_mode` | `HONCH_DURABILITY_OS_BUFFERED`. |
 
 There is no hidden background flush thread. Call `honch_tick()` from your loop or scheduler and call `honch_flush()` for an immediate drain attempt.
 
@@ -63,7 +66,7 @@ int main(void)
         .firmware_version = "1.0.0",
         .environment = "production",
         .queue_directory = ".honch-queue",
-        .durability_mode = HONCH_DURABILITY_SYNC_ALWAYS,
+        .durability_mode = HONCH_DURABILITY_OS_BUFFERED,
     };
 
     honch_client_t *client = NULL;
@@ -112,7 +115,7 @@ The queue directory layout is:
     firmware_version
 ```
 
-`HONCH_DURABILITY_SYNC_ALWAYS` writes event files with fsync for stronger crash safety. `HONCH_DURABILITY_OS_BUFFERED` keeps atomic rename behavior but skips per-event fsyncs for lower enqueue latency.
+`HONCH_DURABILITY_OS_BUFFERED` is the default. It keeps atomic rename behavior but skips per-event fsyncs for lower enqueue latency and reduced flash wear. Set `HONCH_DURABILITY_SYNC_ALWAYS` when power-loss durability is required; it fsyncs each queued event file and the queue directory before `honch_track()` returns.
 
 Use one active client per queue directory.
 
