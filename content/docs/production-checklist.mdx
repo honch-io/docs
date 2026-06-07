@@ -58,6 +58,7 @@ React Native Relay:
 
 - treat the SDK as preview;
 - validate native host builds on iOS and Android;
-- verify BLE scan, connect, notification, and ACK behavior on devices;
+- verify the host app's BLE scan, connect, notification, and ACK write behavior on devices;
+- verify notification bytes are passed into `receiveFrame()` and ACK bytes are written only after durable receipt;
 - verify MMKV persistence across app restart;
 - verify accepted Capture responses remove queue state once.

@@ -183,19 +183,14 @@ void loop() {
 
 ### React Native Relay
 
-React Native Relay is preview and is only for devices that cannot upload directly. The mobile app ACKs the device after the completed relay message is durably stored, then uploads to Capture separately.
+React Native Relay is preview and is only for devices that cannot upload directly. The host app owns BLE, passes relay notification bytes into the SDK, writes SDK-returned ACK bytes after durable receipt, then uploads to Capture separately.
 
 ```ts
-import { NativeEventEmitter, NativeModules } from "react-native";
 import { createMMKV } from "react-native-mmkv";
 import {
   createMobileRelay,
   createMmkvRelayStore,
-  createRelayNativeBindings,
 } from "@honch/react-native-relay";
-
-const nativeModule = NativeModules.HonchReactNativeRelay;
-const bindings = createRelayNativeBindings(nativeModule);
 
 const relay = createMobileRelay({
   durableStore: createMmkvRelayStore(createMMKV({ id: "honch-relay" })),
@@ -208,12 +203,15 @@ const relay = createMobileRelay({
     streamId: (message) => `relay-${message.deviceId}`,
     messageId: (message) => Number(message.sequence),
   },
-  bleNative: bindings.bleNative,
-  schedulerNative: bindings.schedulerNative,
-  frameEvents: new NativeEventEmitter(nativeModule),
 });
 
-relay.subscribeNativeFrames();
+hostBle.onRelayFrame(async ({ deviceId, frameBytes }) => {
+  await relay.receiveFrame(deviceId, frameBytes, {
+    acknowledge: async ({ ackBytes }) => {
+      await hostBle.writeRelayAck(deviceId, ackBytes);
+    },
+  });
+});
 ```
 
 ## 4. Verify

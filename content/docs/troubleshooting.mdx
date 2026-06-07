@@ -43,7 +43,7 @@ Check in this order:
 | C/POSIX | Writable queue directory, one active client, libcurl connectivity, `pending/` and `dead/` contents. |
 | MicroPython | `_honch_core` import, wrapper import, mounted filesystem, `urequests`, memory headroom. |
 | Arduino ESP32 | Wi-Fi connection, root CA PEM, `Honch.tick()` or `Honch.loop()` in `loop()`, connectivity callback, `Honch.lastError()` after failure. |
-| React Native Relay | BLE permissions, native bridge registration, frame checksum/offsets, durable store writes, ACK writes, background upload setup. |
+| React Native Relay | Host BLE permissions and notification subscription, frame checksum/offsets, durable store writes, ACK writes, background upload setup. |
 
 ## Do Not Retry Blindly
 

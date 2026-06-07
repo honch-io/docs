@@ -54,4 +54,4 @@ Do not call full SDK tracking APIs from ISR context. Tracking can validate input
 
 ## How does React Native Relay ACK a device?
 
-The mobile relay ACKs after every chunk passes validation and the completed compact message is durably stored on mobile. Capture upload success is tracked separately by the relay queue and retry scheduler.
+The host app owns the BLE write. React Native Relay returns ACK bytes only after every chunk passes validation and the completed compact message is durably stored on mobile. The host app writes those ACK bytes to the relay ACK characteristic. Capture upload success is tracked separately by the relay queue and retry scheduler.
