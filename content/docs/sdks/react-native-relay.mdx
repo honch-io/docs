@@ -16,7 +16,7 @@ You need:
 | Requirement | Notes |
 | --- | --- |
 | React Native host app | The package does not include a complete host app. |
-| Native bridge | iOS and Android modules expose BLE frames and scheduling hooks. |
+| Native bridge | Android exposes upload scheduling hooks. BLE is owned by the host app on both platforms. |
 | Durable store | MMKV in production, or another store that implements the relay storage contract. |
 | Firmware relay frames | Relay chunk frames from firmware. |
 | Project key | Used by the mobile uploader. |
@@ -60,17 +60,17 @@ Frame Notify Characteristic: 484f4e43-482d-5245-4c41-592d4652414d
 ACK Write Characteristic: 484f4e43-482d-5245-4c41-592d41434b31
 ```
 
-Native bridges emit frame notifications as:
+The relay package does not scan, connect, subscribe to characteristics, emit frame notifications, or write ACKs. Your host BLE stack should pass each complete relay frame to `relay.receiveFrame(...)` and write returned ACK bytes only when provided.
 
-```text
-HonchRelayFrame
-{
-  deviceId: "<native peripheral id>",
-  frameBase64: "<relay frame bytes>"
-}
+```ts
+await relay.receiveFrame(deviceId, frameBytes, {
+  acknowledge: async ({ ackBytes }) => {
+    await hostBle.writeRelayAck(deviceId, ackBytes);
+  },
+});
 ```
 
-Expected result: your React Native host receives `HonchRelayFrame` events while subscribed.
+Expected result: your React Native host stores complete messages durably before writing ACK bytes to the device.
 
 ## 4. Choose Durable Storage
 
@@ -90,7 +90,7 @@ For local development, `createMemoryDurableStore` or `createJsonFileRelayStore` 
 ## 5. Wire The Relay
 
 ```ts
-import { NativeEventEmitter, NativeModules } from "react-native";
+import { NativeModules } from "react-native";
 import {
   createMobileRelay,
   createRelayNativeBindings,
@@ -112,12 +112,16 @@ const relay = createMobileRelay({
     streamId: (message) => `relay-${message.deviceId}`,
     messageId: (message) => Number(message.sequence),
   },
-  bleNative: bindings.bleNative,
   schedulerNative: bindings.schedulerNative,
-  frameEvents: new NativeEventEmitter(nativeModule),
 });
 
-relay.subscribeNativeFrames();
+hostBle.onRelayFrame(async ({ deviceId, frameBytes }) => {
+  await relay.receiveFrame(deviceId, frameBytes, {
+    acknowledge: async ({ ackBytes }) => {
+      await hostBle.writeRelayAck(deviceId, ackBytes);
+    },
+  });
+});
 ```
 
 Expected result: frame events are decoded, validated, assembled into completed messages, and stored durably before the device is ACKed.
@@ -154,7 +158,7 @@ iOS:
 
 - Add `NSBluetoothAlwaysUsageDescription`.
 - Enable `bluetooth-central` background mode if receipt should continue in the background.
-- Install through a React Native iOS host `Podfile`; the podspec links CoreBluetooth and BackgroundTasks.
+- There is no package-owned iOS native module in `0.1.0`; call `drainUploads()` from the host app foreground lifecycle.
 
 Android:
 
@@ -181,15 +185,14 @@ uploadRelayMessage(config, message)
 uploadRelayMessageOutcome(config, message)
 drainRelayQueue(options)
 nextBackoffDelayMs(attempt, random)
-createBleRelayReceiver(options)
+buildRelayAck(sequence)
+createRelayFrameReceiver(options)
 createRelayUploadScheduler(options)
 createMobileRelay(options)
 createRelayNativeBindings(nativeModule)
-subscribeRelayNativeFrames(source, onFrame)
-decodeRelayFrameEventPayload(frameBase64)
 ```
 
-`createMobileRelay` combines durable queueing, native BLE, native upload scheduling, optional native frame events, and upload draining.
+`createMobileRelay` combines durable queueing, host-passed frame receipt, optional native upload scheduling, and upload draining.
 
 ## Troubleshooting
 
@@ -199,5 +202,5 @@ decodeRelayFrameEventPayload(frameBase64)
 | Duplicate chunks arrive | The queue should reject or ignore duplicates by device and sequence. |
 | Upload retries forever | Endpoint URL, project key, network, Capture response. |
 | Message drops | Response was permanent (`400`, `401`, `404`) or frame was malformed. |
-| Native event missing | Bridge registration, BLE permissions, frame notify subscription. |
+| Frame receipt missing | Host BLE permissions, notify subscription, and handoff to `receiveFrame`. |
 | Background upload missing | iOS background mode or Android WorkManager setup. |
