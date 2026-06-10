@@ -18,7 +18,9 @@ npm run lint
 
 ## Content
 
-User-facing docs live in `content/docs`.
+User-facing docs live in `content/docs`. The current docs cover the SDK
+overview, quickstart, shared SDK concepts, FAQ, shared C core, ESP-IDF,
+C/POSIX, MicroPython, Arduino ESP32, and React Native Relay.
 
 The docs source is configured in `source.config.ts` and loaded by `src/lib/source.ts`.
 

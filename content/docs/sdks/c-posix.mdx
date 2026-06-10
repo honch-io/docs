@@ -1,0 +1,209 @@
+---
+title: C/POSIX
+description: Build, configure, run, and verify the Honch C/POSIX SDK.
+---
+
+The C/POSIX SDK is the easiest way to validate Honch behavior on a development machine or embedded Linux target. It uses Shared Core behavior with POSIX storage, libcurl transport, and file-backed queues.
+
+Status: available, Shared Core behavior `0.2.0`.
+
+## Before You Start
+
+You need:
+
+| Requirement | Notes |
+| --- | --- |
+| CMake | Version `3.20+`. |
+| C compiler | C11-capable compiler. |
+| libcurl | Used by the POSIX transport. |
+| Queue directory | Writable by one active SDK client/process at a time. |
+| Project key | Sent as `X-Honch-Project-Key`. |
+
+Use C/POSIX first when you want to prove the event model, upload path, or retry behavior without flashing hardware.
+
+## 1. Build The SDK
+
+From the SDK repository:
+
+```bash
+cd ports/posix
+cmake -S . -B build -DHONCH_BUILD_EXAMPLES=ON
+cmake --build build
+```
+
+Expected result: example binaries are available under `build/example`.
+
+Optional switches:
+
+| Switch | Purpose |
+| --- | --- |
+| `HONCH_BUILD_EXAMPLES` | Build example programs. |
+
+## 2. Configure A Client
+
+```c
+typedef struct honch_config {
+    const char *api_key;
+    const char *endpoint_url;
+    const char *device_id;
+    const char *device_model;
+    const char *firmware_version;
+    const char *environment;
+    const char *queue_directory;
+    size_t batch_size;
+    size_t max_queued_events;
+    size_t max_event_bytes;
+    unsigned int transport_timeout_ms;
+    unsigned int flush_interval_seconds;
+    size_t flush_event_threshold;
+    unsigned int flush_retry_initial_ms;
+    unsigned int flush_retry_max_ms;
+    int disable_background_flush;
+    int (*battery_callback)(void);
+    int battery_low_threshold;
+    honch_auto_properties_fn auto_properties_callback;
+    void *auto_properties_userdata;
+    honch_durability_mode_t durability_mode;
+} honch_config_t;
+```
+
+Required fields:
+
+- `api_key`
+- `endpoint_url`
+- `device_model`
+- `firmware_version`
+- `queue_directory`
+
+Common defaults:
+
+| Field | Default |
+| --- | --- |
+| `device_id` | Generated and persisted when omitted. |
+| `environment` | `production`. |
+| `batch_size` | `20`, capped at `50`. |
+| `max_queued_events` | `1000`. |
+| `max_event_bytes` | `16384`. |
+| `transport_timeout_ms` | `10000`. |
+| `flush_interval_seconds` | `60`. |
+| `flush_event_threshold` | `30`. |
+| `durability_mode` | `HONCH_DURABILITY_SYNC_ALWAYS`. |
+
+Set `disable_background_flush` nonzero when you want explicit `honch_flush` calls to be the only delivery trigger.
+
+## 3. Send A First Event
+
+```c
+#include "honch/honch.h"
+
+int main(void)
+{
+    honch_config_t config = {
+        .api_key = "project-key",
+        .endpoint_url = "https://capture.honch.io",
+        .device_model = "linux-gateway",
+        .firmware_version = "1.0.0",
+        .environment = "production",
+        .queue_directory = ".honch-queue",
+        .durability_mode = HONCH_DURABILITY_SYNC_ALWAYS,
+    };
+
+    honch_client_t *client = NULL;
+    honch_status_t status = honch_init(&client, &config);
+    if (status != HONCH_OK) {
+        return 1;
+    }
+
+    honch_track(client, "app_started", "{\"source\":\"posix\"}");
+    honch_flush(client);
+    honch_shutdown(client);
+}
+```
+
+Expected result:
+
+- `.honch-queue/state/device_id` is created;
+- `.honch-queue/state/distinct_id` is created;
+- retryable failures stay under `.honch-queue/pending`;
+- permanent rejections move attempted events to `.honch-queue/dead`;
+- accepted events are consumed from `pending`.
+
+## 4. Add Identity And Sessions
+
+```c
+honch_identify(client, "account-123", "{\"plan\":\"beta\"}");
+
+honch_session_start(client, "recording");
+honch_track(client, "recording_started", "{\"mode\":\"hdr\"}");
+honch_session_end(client);
+```
+
+Expected result: events after `identify` use the new `distinct_id`, and events tracked during a session include `$session_id`.
+
+## 5. Validate JSON Inputs
+
+Rules:
+
+- `properties_json` and `traits_json` must be JSON objects.
+- `value_json` in `honch_set_property` can be any valid JSON value.
+- Event names must be nonblank and no longer than 128 characters.
+- Distinct IDs must be nonblank and no longer than 256 characters.
+
+Invalid input returns `HONCH_ERROR_INVALID_ARGUMENT`. The POSIX SDK fails closed instead of silently dropping malformed properties.
+
+## 6. Inspect Local Storage
+
+The queue directory layout is:
+
+```text
+.honch-queue/
+  pending/
+  dead/
+  state/
+    device_id
+    distinct_id
+    firmware_version
+```
+
+Durability modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `HONCH_DURABILITY_SYNC_ALWAYS` | Writes event files with fsync for stronger crash safety. |
+| `HONCH_DURABILITY_OS_BUFFERED` | Keeps atomic rename behavior but skips per-event fsyncs. |
+
+When the queue is full, the oldest event is dropped to admit the newer event.
+
+## 7. Confirm Transport
+
+The POSIX transport uses libcurl and sends compact chunks to:
+
+```text
+POST <endpoint_url>/capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <api_key>
+X-Honch-Stream-Id: <stream_id>
+```
+
+Use HTTPS in production. Local development can use HTTP only when you intentionally point the endpoint at a local Capture service.
+
+## 8. Run Examples
+
+```bash
+./build/example/posix_device/honch_posix_example
+./build/example/connected_camera/honch_connected_camera_example
+./build/example/posix_gpio/honch_posix_gpio_example
+```
+
+GPIO tracking is not part of Shared Core. Use a platform integration like `example/posix_gpio` to debounce platform signals and call `honch_track` from normal process context.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `honch_init` returns invalid argument | Required config fields, queue directory, durability mode. |
+| Queue files remain in `pending` | Endpoint, network, project key, or retryable Capture response. |
+| Files move to `dead` | Capture permanently rejected the payload. |
+| No state files | Init did not complete or queue directory is not writable. |
+| Two processes conflict | Use one active client per queue directory. |
+| Events too large | Reduce property payload size or raise `max_event_bytes`. |

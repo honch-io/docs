@@ -1,0 +1,184 @@
+---
+title: MicroPython
+description: Build firmware with _honch_core, install the Python wrapper, and verify MicroPython events.
+---
+
+The MicroPython SDK is a thin Python wrapper around the `_honch_core` user C module. It is not a standalone pure-Python SDK. The firmware image must include the Honch user module so Shared Core can own identity, queueing, retry, compact encoding, and relay packetization.
+
+Status: available, Shared Core behavior `0.2.0`.
+
+## Before You Start
+
+You need:
+
+| Requirement | Notes |
+| --- | --- |
+| MicroPython checkout | Build from source for the target port. |
+| Honch user module | `ports/micropython/usermod/honch/micropython.cmake`. |
+| Python wrapper files | Frozen through `manifest.py` or installed with `mip`. |
+| Queue directory | Writable filesystem path on the device. |
+| Network stack | Board-specific; transport imports `urequests`. |
+| Project key | Sent as `X-Honch-Project-Key`. |
+
+Installing the wrapper files without `_honch_core` will not work.
+
+## 1. Build Firmware With `_honch_core`
+
+For the Unix port:
+
+```bash
+make -C ports/unix \
+  USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake
+```
+
+For board firmware, pass the same user module path and freeze the wrapper:
+
+```bash
+make BOARD=MYBOARD \
+  USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake \
+  FROZEN_MANIFEST=/path/to/SDK/ports/micropython/manifest.py
+```
+
+Expected result: importing `_honch_core` succeeds in MicroPython.
+
+## 2. Install Or Freeze The Wrapper
+
+The wrapper can be frozen with the manifest above. `mip` can also install the wrapper files from `ports/micropython/package.json`, but the firmware still needs `_honch_core`.
+
+Expected result: importing `honch` succeeds.
+
+## 3. Create A Queue Directory
+
+Pick a path that survives reboot on your board:
+
+```text
+/honch/
+  pending/
+  dead/
+  state/
+```
+
+The SDK creates subdirectories and files as needed. Make sure the filesystem is mounted before creating the client.
+
+## 4. Configure The Client
+
+Required:
+
+- `api_key`
+- `endpoint_url`
+- `device_model`
+- `firmware_version`
+- `queue_directory`
+
+Useful options:
+
+| Option | Default |
+| --- | --- |
+| `device_id` | Generated and persisted when omitted. |
+| `environment` | `production`. |
+| `batch_size` | `20`, capped at `50`. |
+| `max_queued_events` | `1000`. |
+| `max_event_bytes` | `16384`. |
+| `transport_timeout_ms` | `10000`. |
+| `flush_interval_seconds` | `60` in wrapper config, but background flush is disabled by the current user module. |
+| `flush_event_threshold` | `30`. |
+| `battery_low_threshold` | `15`. |
+
+Python `platform=`, `transport=`, `battery_callback=`, and `auto_properties_callback=` hooks are rejected. Board behavior belongs in the C user module.
+
+## 5. Send A First Event
+
+```python
+import honch
+
+client = honch.Honch(
+    api_key="project-key",
+    endpoint_url="https://capture.honch.io",
+    device_model="pico-w",
+    firmware_version="1.0.0",
+    queue_directory="/honch",
+)
+
+client.track("app_started", {"source": "micropython"})
+client.flush()
+client.shutdown()
+```
+
+Expected result:
+
+- state files are written under `/honch/state`;
+- retryable failures stay under `/honch/pending`;
+- permanent rejections move attempted events to `/honch/dead`;
+- accepted events are consumed.
+
+Call `flush()` explicitly. The current user module disables background flushing even though the Python config object exposes interval and threshold fields.
+
+## 6. Add Identity, Sessions, And Connectivity
+
+```python
+client.identify("account-123", {"plan": "beta"})
+
+client.session_start("recording")
+client.track("recording_started", {"mode": "hdr"})
+client.session_end()
+
+client.connected()
+client.disconnected()
+client.connectivity_changed(True)
+```
+
+Connectivity methods suppress duplicate states and queue `$connectivity_change` only when the state changes.
+
+## 7. Handle Errors
+
+The wrapper maps `_honch_core` statuses into Python exceptions:
+
+| Exception | Meaning |
+| --- | --- |
+| `InvalidArgumentError` | Bad config, event name, identity, properties, or JSON value. |
+| `StorageError` | Storage I/O or queue-full condition. |
+| `TransportError` | Transport or timeout failure. |
+| `RateLimitedError` | Capture rate limit. |
+| `ServerError` | Capture server error. |
+| `RejectedError` | Permanent capture rejection. |
+| `NotInitializedError` | Client missing or already shut down. |
+| `HonchError` | Generic SDK error. |
+
+`CompressionUnavailableError` exists in the public wrapper exports for compatibility, but the current compact chunk path does not expose a compression feature.
+
+## 8. Verify Runtime Behavior
+
+Check these before adding more events:
+
+1. `import _honch_core` succeeds.
+2. `import honch` succeeds.
+3. Client creation does not raise.
+4. Queue files appear below `queue_directory`.
+5. `flush()` reaches the configured endpoint or leaves retryable files pending.
+
+The transport imports `urequests` and sends compact chunks to:
+
+```text
+POST <endpoint_url>/capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <api_key>
+X-Honch-Stream-Id: <stream_id>
+```
+
+## Examples
+
+- `examples/basic.py` tracks identity, a session, a custom event, flush, and shutdown.
+- `examples/persistent_queue.py` queues an event before network delivery and tolerates retryable flush errors.
+- `examples/pico_w_main.py` is a Pico W example with Wi-Fi, identity, sessions, nested properties, reserved-property conflict checks, and flush.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `ImportError: _honch_core` | Firmware was not built with the Honch user module. |
+| `ImportError: honch` | Wrapper files were not frozen or installed. |
+| Client creation fails | Required config values or queue directory. |
+| Flush does nothing | Network setup, `urequests`, endpoint URL, project key. |
+| Files stay in `pending` | Retryable transport or Capture response. |
+| Files move to `dead` | Capture permanently rejected the payload. |
+| Out-of-memory behavior | Confirm C heap reservation for the target port. |
