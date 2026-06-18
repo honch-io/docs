@@ -14,8 +14,11 @@ This guide is the shortest useful path through the SDKs. Pick the runtime your d
 | MicroPython firmware with custom user modules | MicroPython SDK plus `_honch_core` | [MicroPython guide](/sdks/micropython) |
 | ESP32 Arduino sketches | Arduino ESP32 library | [Arduino guide](/sdks/arduino) |
 | BLE/offline device forwarding through a companion app | React Native Relay | [React Native Relay guide](/sdks/react-native-relay) |
+| A platform we don't ship an SDK for, or you'd rather not use one | Build your own client over the HTTP JSON API | [Build Your Own Integration](/byo-integration) |
 
 If you are not sure, start with C/POSIX on your development machine. It exercises the same shared behavior as the embedded ports without flashing hardware.
+
+Not using an official SDK? You can POST plain JSON straight to Capture from any host that makes HTTPS requests — a mobile app, a backend, or the browser. See [Build Your Own Integration](/byo-integration) and the [HTTP JSON API](/http-api). The rest of this quickstart covers the official SDKs.
 
 ## 2. Set Your Capture Values
 
@@ -24,12 +27,12 @@ Every direct-upload SDK needs the same product values:
 | Value | Example | Why it matters |
 | --- | --- | --- |
 | Project API key | `project-key` | Sent as `X-Honch-Project-Key`. |
-| Capture endpoint | `https://capture.honch.io` | SDKs append `/capture`. |
+| Capture endpoint | `https://i.honch.io` | SDKs append `/capture`. |
 | Device model | `demo-board` | Lets you filter by hardware type. |
 | Firmware version | `1.0.0` | Drives firmware rollout and update events. |
 | Environment | `production` | Defaults to `production` when omitted. |
 
-For local capture testing, use your local service URL as the endpoint or host. Production firmware should use the hosted HTTPS endpoint.
+Always send to the hosted HTTPS endpoint (`https://i.honch.io`). To keep development data separate from production, set the environment to `development` or use a separate project key — Honch is a hosted service, so there is no endpoint you run yourself.
 
 ## 3. Send A First Event
 
@@ -56,7 +59,7 @@ void app_main(void)
 
     honch_config_t config = {
         .api_key = CONFIG_HONCH_API_KEY,
-        .host = "https://capture.honch.io",
+        .host = "https://i.honch.io",
         .device_model = "demo-board",
         .firmware_version = "1.0.0",
         .event_buffer = event_buffer,
@@ -91,7 +94,7 @@ int main(void)
 {
     honch_config_t config = {
         .api_key = "project-key",
-        .endpoint_url = "https://capture.honch.io",
+        .endpoint_url = "https://i.honch.io",
         .device_model = "linux-gateway",
         .firmware_version = "1.0.0",
         .queue_directory = ".honch-queue",
@@ -125,7 +128,7 @@ import honch
 
 client = honch.Honch(
     api_key="project-key",
-    endpoint_url="https://capture.honch.io",
+    endpoint_url="https://i.honch.io",
     device_model="pico-w",
     firmware_version="1.0.0",
     queue_directory="/honch",
@@ -154,7 +157,7 @@ void setup() {
 
   HonchConfig config = {};
   config.apiKey = "project-key";
-  config.host = "https://capture.honch.io";
+  config.host = "https://i.honch.io";
   config.deviceModel = "esp32-devkit";
   config.firmwareVersion = "1.0.0";
   config.environment = "production";
@@ -193,7 +196,7 @@ const bindings = createRelayNativeBindings(nativeModule);
 const relay = createMobileRelay({
   durableStore: createMmkvRelayStore(createMMKV({ id: "honch-relay" })),
   uploaderConfig: {
-    endpointUrl: "https://capture.honch.io",
+    endpointUrl: "https://i.honch.io",
     projectKey: "project-key",
     relayId: "mobile-relay-1",
     relaySdkPlatform: "react-native",

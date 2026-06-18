@@ -100,7 +100,7 @@ int main(void)
 {
     honch_config_t config = {
         .api_key = "project-key",
-        .endpoint_url = "https://capture.honch.io",
+        .endpoint_url = "https://i.honch.io",
         .device_model = "linux-gateway",
         .firmware_version = "1.0.0",
         .environment = "production",
@@ -185,7 +185,7 @@ X-Honch-Project-Key: <api_key>
 X-Honch-Stream-Id: <stream_id>
 ```
 
-Use HTTPS in production. Local development can use HTTP only when you intentionally point the endpoint at a local Capture service.
+Use HTTPS for every environment, sending to the hosted endpoint (`https://i.honch.io`). Honch is a hosted service; there is no Capture endpoint you run yourself.
 
 ## 8. Run Examples
 

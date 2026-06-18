@@ -1,0 +1,350 @@
+---
+title: HTTP JSON API
+description: POST plain JSON to the Honch Capture endpoint to send events without an official SDK.
+---
+
+The Capture JSON API is a standards-friendly front door for clients that build their own integration instead of using an official SDK. You send plain JSON over HTTPS and Capture expands it into the exact same canonical events the binary wire format produces, then runs it through the same enrichment and storage pipeline.
+
+If you are integrating from a phone, a backend, or any host that can make an HTTPS request, this is the path to use. For severely bandwidth- or power-constrained device transports, see [Wire Format](/wire-format). For a narrative walkthrough of building a client end to end, see [Build Your Own Integration](/byo-integration).
+
+## Endpoint And Authentication
+
+```text
+POST https://i.honch.io/capture
+Content-Type: application/json
+X-Honch-Project-Key: <project_api_key>
+```
+
+| Item | Value |
+| --- | --- |
+| Method | `POST` |
+| URL | `https://i.honch.io/capture` (aliases: `/e`, `/chunks`) |
+| Content type | `application/json` |
+| Auth header | `X-Honch-Project-Key: <project_api_key>` |
+
+The project key looks like `honch_...`. It must be active and carry the `capture` or `all` scope. There is no token in the request body; authentication is the header only.
+
+The same URL also accepts the binary wire format under `Content-Type: application/vnd.honch.chunk`. Capture branches on the content type, so you do not need a different path for each format.
+
+## Request Body
+
+```json
+{
+  "context": {
+    "distinct_id": "user-or-device-id",
+    "$device_id": "device-abc",
+    "$device_model": "pocket-cam-1",
+    "$firmware_version": "1.4.2",
+    "$sdk_platform": "pocket-ios",
+    "$sdk_version": "0.1.0",
+    "$environment": "production",
+    "$session_id": "session-xyz"
+  },
+  "events": [
+    {
+      "event": "video_exported",
+      "timestamp": 1700000000000,
+      "properties": { "duration_ms": 5000, "resolution": "4k" }
+    }
+  ]
+}
+```
+
+### Context Keys
+
+`context` is declared once per request and applies to every event in the batch. Only the keys below are accepted.
+
+| Key | Required | Type | Description |
+| --- | --- | --- | --- |
+| `distinct_id` | Required | string (non-empty) | The analytics identity for every event in the request. Becomes the top-level `distinct_id` field, not a property. |
+| `$device_id` | Required | string (non-empty) | Stable device identifier. |
+| `$device_model` | Required | string (non-empty) | Hardware or product model. |
+| `$firmware_version` | Required | string (non-empty) | Firmware or app version. |
+| `$sdk_platform` | Required | string (non-empty) | Your platform tag, for example `pocket-ios`. |
+| `$sdk_version` | Required | string (non-empty) | Your client version. |
+| `$environment` | Optional | string (non-empty) | Defaults to `production` when omitted. |
+| `$session_id` | Optional | string (non-empty) | Present only when a session is active. |
+
+Any context key not in this table is rejected with `422` and code `unknown_context_key`. Put additional dimensions in per-event `properties` instead of inventing context keys.
+
+### Event Fields
+
+`events` is an array of one to 500 events.
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `event` | Required | string (non-empty) | The event name, for example `video_exported`. |
+| `timestamp` | Optional | integer or string | Epoch **milliseconds** (integer) or an RFC3339 string. Omit it and Capture stamps the receive time. |
+| `properties` | Optional | object | Custom per-event properties. |
+
+## Context Promotion
+
+`context` is promoted into every event before storage:
+
+- `distinct_id` becomes the event's top-level identity field.
+- Every other context key (`$device_id`, `$device_model`, `$firmware_version`, `$sdk_platform`, `$sdk_version`, `$environment`, and `$session_id` when present) is copied into each event's `properties`.
+
+This mirrors the binary wire format exactly: a JSON request expands to the same canonical event as the equivalent binary message. You declare device context once and it rides along with each event automatically.
+
+Because those keys are set from context, a per-event property **must not** reuse a promoted key. Sending `$device_id` (or any other promoted key) inside an event's `properties` is rejected with `422` and code `reserved_property`. Use a different property name if you need a custom value.
+
+Reserved **lifecycle** property names are allowed as event properties, because they describe an event rather than device context:
+
+| Property | Type | Used by |
+| --- | --- | --- |
+| `$battery_level` | number (0-100) | Any event — current battery state |
+| `$wifi_rssi` | number (dBm) | Any event — current signal strength |
+| `reset_reason` | string | `$device_boot` |
+| `state` | string | `$connectivity_change` |
+| `previous_version` | string | `$firmware_update` |
+| `new_version` | string | `$firmware_update` |
+| `session_name` | string | `$session_start` |
+
+`$battery_level` and `$wifi_rssi` must be **numbers** — a non-numeric value (e.g. `"low"`) rejects that event with `invalid_property_value`, so hardware metrics stay clean. The string lifecycle properties accept any string.
+
+For the full event model, identity, and the list of recommended lifecycle events, read [Shared Concepts](/concepts).
+
+## Identifying People And Setting Properties
+
+`distinct_id` starts as the device id (an anonymous person). To tie that history to a known user, send a **`$identify` event** — not just a new `distinct_id`. Set `context.distinct_id` to the user id and name the previous (device) id in `$anon_distinct_id`; Honch merges the anonymous person into the user.
+
+These are reserved property names with special server-side meaning (they are allowed as event properties, unlike promoted context keys):
+
+| Property | On event | Meaning |
+| --- | --- | --- |
+| `$anon_distinct_id` | `$identify` | The previous `distinct_id` (usually the device id) to merge into `context.distinct_id`. |
+| `$set` | `$identify`, `$set` | Object of person properties to set (overwrites existing keys). |
+| `$set_once` | `$identify`, `$set` | Object of person properties to set only if not already present. |
+
+```json
+{
+  "context": { "distinct_id": "user-98234", "$device_id": "device-abc", "$device_model": "pocket-cam-1", "$firmware_version": "1.4.2", "$sdk_platform": "pocket-ios", "$sdk_version": "0.1.0" },
+  "events": [
+    {
+      "event": "$identify",
+      "properties": {
+        "$anon_distinct_id": "device-abc",
+        "$set": { "email": "sam@example.com", "plan": "pro" }
+      }
+    }
+  ]
+}
+```
+
+To set person properties without an identity change, send a `$set` event with `$set` / `$set_once` and no `$anon_distinct_id`. Identity resolution and merging happen downstream of capture; the [Build Your Own Integration](/byo-integration#identity-model) guide walks through the full flow and the four IDs (`distinct_id`, `$device_id`, `$session_id`, server-side `person_id`).
+
+## Examples
+
+### curl
+
+```bash
+curl -sS https://i.honch.io/capture \
+  -H "Content-Type: application/json" \
+  -H "X-Honch-Project-Key: honch_your_project_key" \
+  -d '{
+    "context": {
+      "distinct_id": "device-abc",
+      "$device_id": "device-abc",
+      "$device_model": "pocket-cam-1",
+      "$firmware_version": "1.4.2",
+      "$sdk_platform": "pocket-ios",
+      "$sdk_version": "0.1.0"
+    },
+    "events": [
+      { "event": "app_started" },
+      {
+        "event": "video_exported",
+        "timestamp": 1700000000000,
+        "properties": { "duration_ms": 5000, "resolution": "4k" }
+      }
+    ]
+  }'
+```
+
+### TypeScript (`fetch`)
+
+```ts
+const CAPTURE_URL = "https://i.honch.io/capture";
+const PROJECT_KEY = "honch_your_project_key";
+
+const payload = {
+  context: {
+    distinct_id: "device-abc",
+    $device_id: "device-abc",
+    $device_model: "pocket-cam-1",
+    $firmware_version: "1.4.2",
+    $sdk_platform: "pocket-ios",
+    $sdk_version: "0.1.0",
+  },
+  events: [
+    { event: "app_started" },
+    {
+      event: "video_exported",
+      timestamp: Date.now(),
+      properties: { duration_ms: 5000, resolution: "4k" },
+    },
+  ],
+};
+
+const response = await fetch(CAPTURE_URL, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "X-Honch-Project-Key": PROJECT_KEY,
+  },
+  body: JSON.stringify(payload),
+});
+
+if (!response.ok) {
+  throw new Error(`capture failed: ${response.status}`);
+}
+
+console.log(await response.json()); // { status: "ok", accepted: 2, rejected: 0, errors: [] }
+```
+
+## Success Response
+
+On acceptance Capture returns `200 OK` with:
+
+```json
+{ "status": "ok", "accepted": 2, "rejected": 0, "errors": [] }
+```
+
+- `accepted` — events expanded and enqueued from this request.
+- `rejected` — events dropped for a per-event problem (see below).
+- `errors` — one `FieldError` per dropped event, empty when nothing was dropped.
+
+### Partial Acceptance
+
+A single malformed event does **not** sink the whole batch. Per-event problems (a
+bad `event` name, a bad `timestamp`, a reserved-property collision, a non-numeric
+`$battery_level`) drop only that event; the rest are still stored, and `200`
+reports `rejected` and the per-event `errors`.
+
+Whole-request problems still reject everything with a `4xx`: bad or missing shared
+`context`, an empty batch, more than 500 events, or **every** event being
+individually invalid (nothing left to store). The rule your client can rely on:
+
+> **`2xx` ⇒ at least one event was stored. `4xx` ⇒ nothing was stored.**
+
+Events listed in a `200`'s `errors` are permanently rejected — do not retry them.
+
+## Errors
+
+Validation and auth failures return a JSON body describing exactly what was wrong and where:
+
+```json
+{
+  "errors": [
+    {
+      "code": "missing_context_key",
+      "message": "context.$device_id is required",
+      "field": "context.$device_id"
+    }
+  ]
+}
+```
+
+`field` is present when the error points at a specific location (for example `context.$device_id` or `events[0].timestamp`) and omitted otherwise. The `errors` array may contain more than one entry: validation collects every problem so you can fix them in one pass.
+
+| Status | `code` | Meaning |
+| --- | --- | --- |
+| `400` | `invalid_json` | The body is not valid JSON. |
+| `401` | `missing_project_key` | The `X-Honch-Project-Key` header is missing or empty. |
+| `401` | `unauthorized` | The key is invalid, inactive, or lacks the `capture`/`all` scope. |
+| `415` | `unsupported_media_type` | The `Content-Type` is neither `application/json` nor `application/vnd.honch.chunk`. |
+| `422` | `missing_context_key` | A required context key is absent. |
+| `422` | `unknown_context_key` | A context key outside the accepted set was sent. |
+| `422` | `invalid_context_value` | A context value is the wrong type or an empty string. |
+| `422` | `empty_batch` | `events` is empty. |
+| `422` | `too_many_events` | More than 500 events in one request. |
+| `200`/`422` | `invalid_event` | An event name is missing or empty. |
+| `200`/`422` | `invalid_timestamp` | A timestamp is not epoch milliseconds or RFC3339. |
+| `200`/`422` | `reserved_property` | A per-event property reused a promoted context key. |
+| `200`/`422` | `invalid_property_value` | A typed property had the wrong type (e.g. `$battery_level` not a number). |
+| `429` | `rate_limited` | The project exceeded its rate limit. |
+| `5xx` | — | Server-side failure. |
+
+The first group are **whole-request** failures (`422`, nothing stored). The `200`/`422` group are **per-event** failures: they appear in the `errors` array of a `200` when other events succeeded, or cause a `422` only when they leave no events to store.
+
+### Retry policy
+
+Treat `429`, `5xx`, and network/timeout failures as retryable: retain the batch and retry with backoff. Treat `4xx` as permanent — fix the request before resending, because retrying the same payload fails the same way. A `200` with a non-empty `errors` array means the listed events were permanently rejected (don't retry them) while the rest were stored. The [Build Your Own Integration](/byo-integration) guide describes a concrete backoff schedule.
+
+## Validate Before You Send
+
+`POST https://i.honch.io/capture/validate` is a dry run. It uses the same content types and the same `X-Honch-Project-Key` auth, and it authenticates, decodes, validates, and expands your payload — but it does **not** store anything and does **not** count against your rate limit.
+
+It always returns `200 OK` with this shape:
+
+```json
+{
+  "ok": true,
+  "content_type": "application/json",
+  "accepted": 1,
+  "rejected": 0,
+  "expanded_events": [
+    {
+      "event": "video_exported",
+      "distinct_id": "device-abc",
+      "timestamp": 1700000000000,
+      "properties": {
+        "$device_id": "device-abc",
+        "$device_model": "pocket-cam-1",
+        "$firmware_version": "1.4.2",
+        "$sdk_platform": "pocket-ios",
+        "$sdk_version": "0.1.0",
+        "$environment": "production",
+        "duration_ms": 5000
+      },
+      "uuid": "...",
+      "received_at": "...",
+      "ip": null,
+      "geo_country": null,
+      "geo_city": null
+    }
+  ],
+  "errors": []
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `ok` | `true` only when the payload would be stored exactly as sent — nothing rejected and no errors. |
+| `content_type` | The content type Capture decoded. |
+| `accepted` | Number of events that would be stored (the length of `expanded_events`). |
+| `rejected` | Number of events that would be dropped for a per-event problem. |
+| `expanded_events` | The canonical events Capture would store, including promoted context. `uuid`, `received_at`, `ip`, `geo_country`, and `geo_city` are stamped at ingest and are placeholders here. |
+| `errors` | The `FieldError` array — fatal errors, or the per-event errors for the rejected events. |
+
+Use `/capture/validate` to confirm your payloads decode the way you expect and to debug error responses without writing test data into your project. For a partially-valid batch it shows both the events that would be accepted and the errors for those that would be dropped, so you can iterate until `ok` is `true`, then switch the URL to `/capture`.
+
+```bash
+curl -sS https://i.honch.io/capture/validate \
+  -H "Content-Type: application/json" \
+  -H "X-Honch-Project-Key: honch_your_project_key" \
+  -d '{ "context": { "distinct_id": "device-abc" }, "events": [ { "event": "boot" } ] }'
+```
+
+The endpoint also accepts a single complete binary frame (`Content-Type: application/vnd.honch.chunk`) and returns the decoded and expanded result, which is handy for debugging the opaque binary path.
+
+You can lock your client against the shared conformance fixtures, which define this contract case by case: [JSON ingestion conformance fixtures](https://github.com/honch-io/SDK/tree/main/spec/conformance/json).
+
+## Limits
+
+| Limit | Value |
+| --- | --- |
+| Events per request | 500 |
+| Properties per event | 64 |
+| Nested value depth | 8 |
+
+Events-per-request is enforced (`422 too_many_events` above it). The properties-per-event and nesting limits mirror the canonical event model shared with the wire format; stay within them so your events expand identically on both paths.
+
+## Next Steps
+
+<Cards>
+  <Card title="Build Your Own Integration" href="/byo-integration" description="Walk through device to mobile app to capture, batching, retries, and lifecycle events." />
+  <Card title="Shared Concepts" href="/concepts" description="The event model, identity, automatic properties, and lifecycle events." />
+  <Card title="Wire Format" href="/wire-format" description="The binary path for severely constrained device transports." />
+  <Card title="FAQ" href="/faq" description="Troubleshoot delivery, auth, identity, and retry behavior." />
+</Cards>

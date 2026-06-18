@@ -1,0 +1,183 @@
+---
+title: Build Your Own Integration
+description: Send Honch events from your own client by POSTing JSON to Capture, with batching, retries, identity, and lifecycle events.
+---
+
+You do not need an official SDK to use Honch. If your product already moves events through your own app or backend, you can integrate directly against the [HTTP JSON API](/http-api). This guide walks through a complete client, using a representative topology: a device produces events, your mobile app collects and forwards them, and your app uploads to Honch Capture.
+
+```text
+on-device events  ->  your mobile app (collect, batch, retry)  ->  POST https://i.honch.io/capture
+```
+
+The mobile app owns identity, batching, retries, and the project key. The device only needs to hand events to the app.
+
+## Choose JSON Or The Binary Wire Format
+
+| Use JSON when | Use the binary wire format when |
+| --- | --- |
+| You can make ordinary HTTPS requests. | The device transport is severely bandwidth- or power-constrained. |
+| You want a readable, debuggable payload. | Every byte and wakeup matters (low-power radios, metered links). |
+| You want descriptive validation errors. | You are relaying opaque frames from firmware that cannot upload directly. |
+
+JSON is the recommended default. It expands to the exact same canonical event as the binary format, so you lose nothing on the analytics side by choosing it. Only reach for the [wire format](/wire-format) when the transport constraints genuinely require it.
+
+## Identity Model
+
+There are three IDs **you** send, plus one Honch manages for you. Getting the ones you send right is what makes a device's history follow a user.
+
+| ID | Who sets it | Lifetime | What it is |
+| --- | --- | --- | --- |
+| `distinct_id` | you (in `context`) | changes at identify | The identity each event is attributed to. **Starts as the device id**, becomes the user id after you identify. |
+| `$device_id` | you (in `context`) | the device's life (new id on factory reset) | The physical hardware. Independent of `distinct_id`. |
+| `$session_id` | you (in `context`, optional) | one logical session | A recording, workout, trip, etc. |
+| `person_id` | Honch (server-side) | — | The canonical person every `distinct_id` resolves to. **You never send it** — Honch mints it. You only *see* it as the person's id in the dashboard, and you influence it indirectly through `$identify`. |
+
+You only ever manage `distinct_id` (and `$device_id` / `$session_id`). `person_id` is Honch's internal grouping of all the `distinct_id`s that belong to one person; a `$identify` is how you tell Honch that two `distinct_id`s are the same person, and Honch merges them under one `person_id`.
+
+### Anonymous, then identified
+
+Before you know who the user is, send events with `context.distinct_id` set to the **device id** (the same value as `$device_id`). Honch creates an anonymous person for that id.
+
+When the user signs in, you must **send a `$identify` event** — this is the only thing that links the anonymous device history to the user. Set `context.distinct_id` to the user id and put the *previous* (device) id in the event's `$anon_distinct_id` property:
+
+```json
+{
+  "context": {
+    "distinct_id": "user-98234",
+    "$device_id": "device-abc",
+    "$device_model": "pocket-cam-1",
+    "$firmware_version": "1.4.2",
+    "$sdk_platform": "pocket-ios",
+    "$sdk_version": "0.1.0"
+  },
+  "events": [
+    {
+      "event": "$identify",
+      "properties": {
+        "$anon_distinct_id": "device-abc",
+        "$set": { "email": "sam@example.com", "plan": "pro" },
+        "$set_once": { "signup_source": "app" }
+      }
+    }
+  ]
+}
+```
+
+Honch then **merges** the anonymous device person into `user-98234`: every past and future event under either id resolves to the same person. After this, send subsequent events with `context.distinct_id = "user-98234"`.
+
+> **Important:** Just *switching* `distinct_id` from the device id to the user id **without** a `$identify` event does **not** stitch anything — it creates a second, unconnected person. The `$anon_distinct_id` property on a `$identify` event is what performs the merge.
+
+Because `context.distinct_id` is shared by every event in a request, don't mix identities in one request: flush the device-id events first, then send the `$identify` request, then continue under the user id.
+
+### Setting person properties without identifying
+
+To attach properties to the current person without an identity change, send a `$set` event with `$set` / `$set_once` (e.g. for a hardware-only device with no user login):
+
+```json
+{ "context": { "distinct_id": "device-abc", "$device_id": "device-abc", "...": "..." },
+  "events": [ { "event": "$set", "properties": { "$set": { "region": "us-west" } } } ] }
+```
+
+`$set` overwrites existing values; `$set_once` only fills gaps. Both are also accepted inside a `$identify` event (shown above).
+
+### Devices
+
+`$device_id` is tracked independently of identity: Honch keeps a device record per `$device_id` and links it to the most recent person seen on it. One person can own several devices (each sends its own `$device_id`); a device sold to a new owner gets a new `$device_id` on factory reset and starts fresh. See [Shared Concepts](/concepts) for the full model.
+
+## Emit Lifecycle Events
+
+Honch recognizes a set of standard lifecycle events. Emitting them gives you device health and engagement analytics for free, and they expand the same way any other event does. Send them as ordinary events with the property names below.
+
+| Event | When to emit | Properties |
+| --- | --- | --- |
+| `$device_boot` | Device or app comes up | `reset_reason` (string) |
+| `$session_start` | A user session begins | `session_name` (string, optional) |
+| `$session_end` | A user session ends | — |
+| `$firmware_update` | Firmware or app version changed | `previous_version`, `new_version` |
+| `$battery_low` | Battery drops below your threshold | `level` (int) |
+| `$connectivity_change` | Network state changes | `state` (string) |
+| `$error` | An actionable recoverable error occurs | your own diagnostic properties |
+| `$device_shutdown` | Device or app shuts down | — |
+
+The reserved lifecycle property names (`reset_reason`, `session_name`, `previous_version`, `new_version`, `state`, `$battery_level`, `$wifi_rssi`) are allowed as event properties. They are not context keys, so put them inside the event's `properties`. The promoted context keys (`$device_id`, `distinct_id`, and so on) are the ones you must not set per-event.
+
+For the canonical definitions, read [Shared Concepts](/concepts) and the [auto-properties spec](https://github.com/honch-io/SDK/tree/main/spec/auto-properties.md).
+
+## Batch Events
+
+Collect events in your app and send them together rather than one request per event.
+
+- Up to 500 events per request. Split larger queues across requests.
+- Declare `context` once per request; it applies to the whole batch. That means every event in a single request shares one `distinct_id`. If your batch spans an identity change, split it at the boundary.
+- Flush on a timer (for example every 30-60 seconds), when the queue reaches a threshold, on app background, and before shutdown.
+
+```json
+{
+  "context": { "distinct_id": "user-42", "$device_id": "device-abc", "$device_model": "pocket-cam-1", "$firmware_version": "1.4.2", "$sdk_platform": "pocket-ios", "$sdk_version": "0.1.0" },
+  "events": [
+    { "event": "$session_start", "timestamp": 1700000000000, "properties": { "session_name": "edit" } },
+    { "event": "video_exported", "timestamp": 1700000005000, "properties": { "duration_ms": 5000 } },
+    { "event": "$session_end", "timestamp": 1700000060000 }
+  ]
+}
+```
+
+## Retry And Backoff
+
+Keep events in a local queue until Capture accepts them, and classify each response:
+
+| Response | Action |
+| --- | --- |
+| `200` | At least one event was stored — remove the batch from your queue. If `rejected > 0`, the events in `errors` were permanently dropped (bad data); log them, don't retry them. |
+| `429`, `5xx`, network/timeout error | Retryable. Keep the batch and retry with backoff. |
+| `400`, `401`, `415`, `422` | Permanent. Nothing was stored; fix the request, key, or content type first. |
+
+The contract is simple: **`2xx` means at least one event was stored; `4xx` means nothing was.** Capture accepts the valid events in a batch and reports the bad ones rather than failing the whole batch, so a single malformed event never blocks the rest of a device's data. A whole-batch `422` only happens when the shared `context` is wrong, the batch is empty/too large, or *every* event was individually invalid.
+
+Use exponential backoff with jitter, matching the official SDK policy:
+
+- Initial delay: 1 second.
+- Maximum delay: 5 minutes.
+- Jitter: plus or minus 25% on each delay.
+
+```ts
+function nextBackoffMs(attempt: number): number {
+  const base = Math.min(1000 * 2 ** attempt, 5 * 60 * 1000); // 1s -> cap 5min
+  const jitter = base * 0.25 * (Math.random() * 2 - 1); // +/- 25%
+  return Math.max(0, Math.round(base + jitter));
+}
+```
+
+On a permanent `4xx`, do not loop on the same batch. Log it, drop or dead-letter it, and fix the cause. The [error table](/http-api#errors) tells you exactly which code you hit and why.
+
+## Validate Before Launch
+
+Before you send live data, point your client at `POST https://i.honch.io/capture/validate` instead of `/capture`. It authenticates and runs the full validation and expansion, returns the canonical events it would store, and surfaces every error — without writing anything or consuming rate limit.
+
+```bash
+curl -sS https://i.honch.io/capture/validate \
+  -H "Content-Type: application/json" \
+  -H "X-Honch-Project-Key: honch_your_project_key" \
+  -d @payload.json
+```
+
+Iterate until the response is `{ "ok": true, ... }` and the `expanded_events` match what you expect, then switch the URL to `/capture`. You can also assert your client against the shared [JSON conformance fixtures](https://github.com/honch-io/SDK/tree/main/spec/conformance/json), which pin the request/response contract case by case. See the [validation workflow](/http-api#validate-before-you-send) for the full response shape.
+
+## Verify It Worked
+
+After you switch to `/capture` and get `{ "status": "ok", "accepted": N }`, open your project's live events feed in the Honch dashboard. Your events appear there shortly after ingest, with the promoted context (`$device_id`, `$device_model`, and so on) attached to each one. If they do not show up, work through the [FAQ](/faq): confirm the key is active and scoped, the content type is `application/json`, and you are not seeing a `4xx` you treated as retryable.
+
+## Reference Client
+
+A reference implementation of this guide — modeling exactly the device → companion app → capture relay, with durable offline queueing — lives in the open-source [SDK repository](https://github.com/honch-io/SDK) (which also holds the wire-format spec and conformance fixtures; the SDK and contract are open source, while the Honch platform itself is a hosted service):
+
+- [TypeScript reference client](https://github.com/honch-io/SDK/tree/main/examples/http-json/typescript) — zero-dependency, uses `fetch`, with `identify`, lifecycle helpers, retry/backoff, and pluggable durable persistence (`initialQueue` / `onQueueChange`) so the pending queue survives an app restart.
+
+## Next Steps
+
+<Cards>
+  <Card title="HTTP JSON API" href="/http-api" description="The complete request schema, error codes, and validation endpoint." />
+  <Card title="Shared Concepts" href="/concepts" description="The event model, identity, automatic properties, and lifecycle events." />
+  <Card title="Wire Format" href="/wire-format" description="The binary path for severely constrained transports." />
+  <Card title="FAQ" href="/faq" description="Troubleshoot delivery, auth, identity, and retries." />
+</Cards>

@@ -1,0 +1,66 @@
+---
+title: Wire Format
+description: The compact binary upload contract for severely constrained device transports.
+---
+
+The compact wire format is a strict binary upload contract used by the official Honch SDKs and accepted by Capture. It produces smaller payloads than JSON and is designed for one chunk transport that works across direct HTTP, relay, BLE, and gateway flows.
+
+For most integrations you should use the [HTTP JSON API](/http-api) instead. JSON expands into the exact same canonical event as the binary format, so you give up nothing on the analytics side, and it is far easier to build and debug. Reach for the wire format only when the device transport is severely bandwidth- or power-constrained, where every byte and wakeup matters.
+
+This page is an orientation. The full byte grammar — header bits, varint encoding, the string table, value tags, and CRC — is defined in the canonical spec: [Compact Wire Format v2](https://github.com/honch-io/SDK/tree/main/spec/wire-format-v2.md).
+
+## When To Use It
+
+| Use the wire format when | Use JSON instead when |
+| --- | --- |
+| The transport is bandwidth- or power-constrained. | You can make ordinary HTTPS requests. |
+| You are relaying opaque frames from firmware that cannot upload directly. | You want readable payloads and descriptive validation errors. |
+| You are implementing an official-SDK-equivalent client. | You are building a typical mobile or backend integration. |
+
+## Endpoint
+
+```text
+POST https://i.honch.io/capture
+Content-Type: application/vnd.honch.chunk
+X-Honch-Project-Key: <project_api_key>
+X-Honch-Stream-Id: <stream_id>        # required for multi-chunk HTTP uploads
+```
+
+This is the same URL the JSON path uses (aliases `/e` and `/chunks` also accept it). Capture branches on the `Content-Type`. The project key is a transport credential and is not encoded inside the device message body. `Content-Encoding` is not allowed.
+
+## Chunk Frame And Compact Message
+
+The format has two layers:
+
+- **Chunk frame** — the transport envelope. The request body is exactly one frame. A frame carries a header byte (protocol version, source type, continuation/more bits), a message id, optional offset or total length, the payload bytes, and a trailing CRC16 on final frames.
+- **Compact message** — the payload assembled from one or more frames. It encodes a string table, the device context (the same promoted keys as the JSON path: `distinct_id`, `$device_id`, and so on), and the event batch with delta-encoded timestamps and tagged property values.
+
+A direct upload that fits in one request sends a single final frame. Constrained links split the same compact message into an init frame plus continuation frames, which Capture reassembles by stream id and message id before decoding. Once decoded, a compact message expands into the identical canonical events the JSON path produces.
+
+## Response Codes
+
+| Response | Meaning |
+| --- | --- |
+| `202` | A non-final chunk was stored. Send the next frame. |
+| `204` | The complete message was accepted. |
+| `400` | Malformed frame or compact message (bad header, varint, length, or CRC16). |
+| `409` | A frame conflicts with stored bytes for the same message (offset mismatch or message-id collision). |
+| `413` | The frame or message exceeds Capture's limits. |
+| `415` | Wrong `Content-Type`, or `Content-Encoding` was set. |
+| `422` | Semantic validation failed (bad UTF-8, duplicate or reserved keys, missing required context, or an out-of-range string reference). |
+| `429`, `5xx` | Retryable. Retain the frame and retry with backoff. |
+
+Retry on `409`, `408`, `429`, `5xx`, and network errors; treat `400`, `413`, `415`, and `422` as permanent. This matches the SDK upload policy described in [Shared Concepts](/concepts).
+
+## Debugging Binary Payloads
+
+The binary path returns bare status codes, which can be opaque. To inspect what a frame decodes to, send a single complete frame to `POST https://i.honch.io/capture/validate` with `Content-Type: application/vnd.honch.chunk`. It returns the decoded and expanded events (or a description of the decode failure) without storing anything. See [Validate Before You Send](/http-api#validate-before-you-send).
+
+## Next Steps
+
+<Cards>
+  <Card title="Compact Wire Format v2 spec" href="https://github.com/honch-io/SDK/tree/main/spec/wire-format-v2.md" description="The complete byte grammar: frames, varints, string table, value tags, and CRC." />
+  <Card title="HTTP JSON API" href="/http-api" description="The easier path — POST plain JSON to the same endpoint." />
+  <Card title="Build Your Own Integration" href="/byo-integration" description="A full client walkthrough with batching, retries, and lifecycle events." />
+  <Card title="Shared Concepts" href="/concepts" description="The event model, identity, and upload policy." />
+</Cards>

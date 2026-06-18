@@ -39,7 +39,7 @@ Capture also accepts the same format on `/e` and `/chunks`.
 
 ## Should I Use HTTPS?
 
-Use the hosted HTTPS Capture endpoint in production. SDKs send to the URL you configure, so local development can intentionally use HTTP against a local capture service.
+Yes. Send to the hosted HTTPS Capture endpoint (`https://i.honch.io`) for every environment — Honch is a hosted service, so there is no Capture endpoint you run yourself. To keep development data out of production, set `$environment` to `development` (or use a separate project key) rather than pointing at a different host.
 
 If HTTPS fails on firmware, check time sync and certificate setup before blaming event encoding.
 
@@ -52,7 +52,7 @@ Check in this order:
 3. Confirm Wi-Fi or network connectivity.
 4. Confirm your API key.
 5. Check whether Capture returned `401`, `4xx`, `409`, `429`, or `5xx`.
-6. For local development, verify the Capture service is healthy and accepts compact chunks.
+6. Send a test payload to `/capture/validate` to confirm your key is accepted and your payload decodes — it runs the full check without storing anything.
 
 What the queue means:
 
