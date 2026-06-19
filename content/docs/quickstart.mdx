@@ -1,36 +1,53 @@
 ---
 title: Quickstart
-description: Pick an SDK, send one event, and confirm it reaches Honch.
+description: Pick your SDK and follow the steps to a verified first event.
 ---
 
-The goal of this page is one verified event. Pick your SDK, set five values, send a single event, and confirm it arrives. Deeper configuration lives on each SDK's guide.
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-## 1. Set Your Capture Values
+Pick your SDK below and follow the steps. The goal is one verified event — install, configure, send, and confirm it reaches Honch. Deeper configuration lives on each SDK's guide.
+
+## Set Your Capture Values
 
 Every integration needs the same handful of values:
 
 | Value | Example | Notes |
 | --- | --- | --- |
 | Project API key | `your-project-key` | Sent as the `X-Honch-Project-Key` header. |
-| Endpoint | `https://i.honch.io` | SDKs append `/capture`. Use HTTPS in production. |
 | Device model | `demo-board` | Static per product. |
 | Firmware version | `1.0.0` | Drives `$firmware_update` when it changes. |
 | Environment | `production` | Optional; defaults to `production`. Use `development` for tests. |
 
-## 2. Send A First Event
+<Callout title="Endpoint">The capture endpoint defaults to `https://i.honch.io`. You only set `host` / `endpoint_url` to point elsewhere — for example a local capture service during development. The examples below pass it explicitly for clarity.</Callout>
 
-### ESP-IDF
+## Build Your Integration
+
+<Tabs items={["ESP-IDF", "C / POSIX", "MicroPython", "Arduino", "No SDK (HTTP)"]}>
+
+<Tab value="ESP-IDF">
+
+<Steps>
+
+<Step>
+### Install the component
 
 ```bash
 idf.py add-dependency "honch/honch^0.2.4"
 ```
+</Step>
+
+<Step>
+### Configure and initialize
+
+Bring up NVS, the network, Wi-Fi, and time first (your firmware's job), then initialize Honch. `honch_init()` is synchronous and does no network I/O.
 
 ```c
 #include "honch.h"
 static uint8_t buf[16384];
 
 honch_config_t config = {
-    .api_key = "your-project-key",
+    .api_key = CONFIG_HONCH_API_KEY,
     .host = "https://i.honch.io",
     .device_model = "demo-board",
     .firmware_version = "1.0.0",
@@ -38,17 +55,64 @@ honch_config_t config = {
     .event_buffer_size = sizeof(buf),
 };
 honch_init(&config);
-honch_track("app_started", NULL, 0);
-honch_flush();   // normally you call honch_tick() from a task
 ```
+</Step>
 
-Full guide: [ESP-IDF](/sdks/esp-idf).
+<Step>
+### Send your first event
 
-### C / POSIX
+```c
+honch_track("app_started", NULL, 0);
+```
+</Step>
+
+<Step>
+### Keep events flowing
+
+There is no background thread. Pump delivery from a low-priority task with at least 8192 bytes of stack:
+
+```c
+static void honch_task(void *arg) {
+    for (;;) {
+        honch_tick();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+// xTaskCreate(honch_task, "honch", 8192, NULL, 2, NULL);
+```
+</Step>
+
+<Step>
+### Verify
 
 ```bash
-cmake -S . -B build -DHONCH_BUILD_EXAMPLES=ON && cmake --build build
+idf.py build flash monitor
 ```
+
+Watch the log for `$device_boot` at init, then a `POST /capture` once Wi-Fi and time are up. Full guide: [ESP-IDF](/sdks/esp-idf).
+</Step>
+
+</Steps>
+
+</Tab>
+
+<Tab value="C / POSIX">
+
+<Steps>
+
+<Step>
+### Build the SDK
+
+```bash
+cmake -S . -B build -DHONCH_BUILD_EXAMPLES=ON
+cmake --build build
+```
+</Step>
+
+<Step>
+### Configure a client
+
+Every call takes an explicit client handle, and the queue is file-backed under `queue_directory`.
 
 ```c
 #include "honch/honch.h"
@@ -62,18 +126,62 @@ honch_config_t config = {
 };
 honch_client_t *client = NULL;
 honch_init(&client, &config);
+```
+</Step>
+
+<Step>
+### Send your first event
+
+```c
 honch_track(client, "app_started", NULL, 0);
 honch_flush(client);
 ```
+</Step>
 
-Full guide: [C / POSIX](/sdks/c-posix).
+<Step>
+### Keep events flowing
 
-### MicroPython
+Pump `honch_tick(client)` from a dedicated thread; it does a synchronous POST and blocks up to `transport_timeout_ms`.
 
-Build firmware with the `_honch_core` user C module (see the [guide](/sdks/micropython)), then:
+```c
+while (running) {
+    honch_tick(client);
+    sleep(1);
+}
+```
+</Step>
+
+<Step>
+### Verify
+
+Run your binary, then inspect the on-disk queue — events move out of `<queue_directory>/pending/` as they upload. Full guide: [C / POSIX](/sdks/c-posix).
+</Step>
+
+</Steps>
+
+</Tab>
+
+<Tab value="MicroPython">
+
+<Steps>
+
+<Step>
+### Build firmware with `_honch_core`
+
+The wrapper needs the user C module compiled into your firmware:
+
+```bash
+make -C ports/unix \
+  USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake
+```
+</Step>
+
+<Step>
+### Configure the client
 
 ```python
 import honch
+
 client = honch.Honch(
     api_key="your-project-key",
     endpoint_url="https://i.honch.io",
@@ -82,17 +190,56 @@ client = honch.Honch(
     firmware_version="1.0.0",
     event_buffer=bytearray(8192),
 )
+```
+</Step>
+
+<Step>
+### Send your first event
+
+```python
 client.track("app_started")
 client.flush()
 ```
+</Step>
 
-Full guide: [MicroPython](/sdks/micropython).
+<Step>
+### Keep events flowing
 
-### Arduino (ESP32)
+```python
+while True:
+    client.tick()
+    time.sleep(1)
+```
+</Step>
+
+<Step>
+### Verify
+
+Watch your capture service receive a `POST /capture`. Full guide: [MicroPython](/sdks/micropython).
+</Step>
+
+</Steps>
+
+</Tab>
+
+<Tab value="Arduino">
+
+<Steps>
+
+<Step>
+### Add the library
+
+In `platformio.ini`:
 
 ```ini
 lib_deps = honch/Honch@^0.2.4
 ```
+</Step>
+
+<Step>
+### Configure Honch
+
+Connect Wi-Fi first, then construct the config empty and assign fields (do not use designated initializers).
 
 ```cpp
 #include <Honch.h>
@@ -108,14 +255,48 @@ config.eventBuffer = buf;
 config.eventBufferSize = sizeof(buf);
 
 honch::defaultClient().begin(config);
+```
+</Step>
+
+<Step>
+### Send your first event
+
+```cpp
 honch::defaultClient().track("app_started");
 ```
+</Step>
 
-Full guide: [Arduino (ESP32)](/sdks/arduino).
+<Step>
+### Keep events flowing
 
-### No SDK?
+Pump `tick()` from your loop or a dedicated task:
 
-Send JSON straight to the API:
+```cpp
+void loop() {
+  honch::defaultClient().tick();
+  delay(1000);
+}
+```
+</Step>
+
+<Step>
+### Verify
+
+Flash and open the serial monitor; confirm a `POST /capture` after Wi-Fi connects. Full guide: [Arduino](/sdks/arduino).
+</Step>
+
+</Steps>
+
+</Tab>
+
+<Tab value="No SDK (HTTP)">
+
+<Steps>
+
+<Step>
+### Send a JSON batch
+
+POST plain JSON to the same endpoint with your project key:
 
 ```bash
 curl -X POST https://i.honch.io/capture \
@@ -133,10 +314,27 @@ curl -X POST https://i.honch.io/capture \
     "events": [{ "event": "app_started" }]
   }'
 ```
+</Step>
 
-Full guide: [Build Your Own Integration](/byo-integration) and the [HTTP JSON API](/http-api).
+<Step>
+### Read the response
 
-## 3. Verify The First Event
+A `200` with `{"status":"ok","accepted":1,"rejected":0}` means it was stored. A `4xx` means nothing was stored — fix the request.
+</Step>
+
+<Step>
+### Validate before launch
+
+Send the same body to `POST /capture/validate` to see the expanded events without storing anything. Full guide: [Build Your Own Integration](/byo-integration) and the [HTTP JSON API](/http-api).
+</Step>
+
+</Steps>
+
+</Tab>
+
+</Tabs>
+
+## Confirm The First Event
 
 | Check | What you should see |
 | --- | --- |
@@ -147,9 +345,9 @@ Full guide: [Build Your Own Integration](/byo-integration) and the [HTTP JSON AP
 
 If events queue but never upload, work through [Troubleshooting](/troubleshooting).
 
-## 4. Add A Few Product Events
+## Add A Few Product Events
 
-Once one event is verified, instrument the moments that matter. Good first events:
+Once one event is verified, instrument the moments that matter — keep event names stable and put the variable detail in properties:
 
 | Event | When |
 | --- | --- |
@@ -158,4 +356,4 @@ Once one event is verified, instrument the moments that matter. Good first event
 | `sync_started` / `sync_finished` | A sync began/ended (property `duration_ms`). |
 | `button_pressed` | A physical input fired (property `pin` or `button`). |
 
-Keep names stable and put the variable detail in properties. Then read [Shared Concepts](/concepts) to understand identity, sessions, and how queueing and retries behave.
+Then read [Shared Concepts](/concepts) to understand identity, sessions, and how queueing and retries behave.
