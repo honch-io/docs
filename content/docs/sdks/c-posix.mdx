@@ -1,182 +1,113 @@
 ---
-title: C/POSIX
-description: Build, configure, run, and verify the Honch C/POSIX SDK.
+title: C / POSIX
+description: Build, configure, and run the Honch C/POSIX SDK on macOS, Linux, and embedded Linux.
 ---
 
-The C/POSIX SDK is the easiest way to validate Honch behavior on a development machine or embedded Linux target. It uses Shared Core behavior with POSIX storage, libcurl transport, and file-backed queues.
+The C/POSIX port runs on macOS and Linux. It targets embedded Linux devices and gateways, and doubles as the fastest way to exercise core behavior on your development machine — its queue is file-backed, so you can watch events move through `pending/` and `dead/` directories on disk.
 
-Status: available, Shared Core behavior `0.2.0`.
+<Callout title="Status">Stable · `0.2.4`. Reports `$sdk_platform` as `c-posix`.</Callout>
 
 ## Before You Start
 
-You need:
-
-| Requirement | Notes |
-| --- | --- |
-| CMake | Version `3.20+`. |
-| C compiler | C11-capable compiler. |
-| libcurl | Used by the POSIX transport. |
-| Queue directory | Writable by one active SDK client/process at a time. |
-| Project key | Sent as `X-Honch-Project-Key`. |
-
-Use C/POSIX first when you want to prove the event model, upload path, or retry behavior without flashing hardware.
+- Requirements: CMake `3.20+`, a C11 compiler, libcurl, and a POSIX threads (pthreads) implementation.
+- Each active client needs its own writable `queue_directory`. Do not point two clients at the same directory.
+- Unlike the device ports, this port's API is multi-client: every call takes an explicit `honch_client_t *`.
 
 ## 1. Build The SDK
 
-From the SDK repository:
+```bash
+cmake -S . -B build -DHONCH_BUILD_TESTS=ON -DHONCH_BUILD_EXAMPLES=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+The build is warnings-as-errors. To compile out `$error`/fault-snapshot support, configure with `-DHONCH_ENABLE_ERROR_TRACKING=OFF`.
+
+To install and link from another CMake project:
 
 ```bash
-cd ports/posix
-cmake -S . -B build -DHONCH_BUILD_EXAMPLES=ON
-cmake --build build
+cmake -S . -B build-install -DHONCH_BUILD_TESTS=OFF -DHONCH_BUILD_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX=/opt/honch-posix
+cmake --build build-install --target honch_posix
+cmake --install build-install
 ```
 
-Expected result: example binaries are available under `build/example`.
-
-Optional switches:
-
-| Switch | Purpose |
-| --- | --- |
-| `HONCH_BUILD_EXAMPLES` | Build example programs. |
-
-## 2. Configure A Client
-
-```c
-typedef struct honch_config {
-    const char *api_key;
-    const char *endpoint_url;
-    const char *device_id;
-    const char *device_model;
-    const char *firmware_version;
-    const char *environment;
-    const char *queue_directory;
-    size_t batch_size;
-    size_t max_queued_events;
-    size_t max_event_bytes;
-    unsigned int transport_timeout_ms;
-    unsigned int flush_interval_seconds;
-    size_t flush_event_threshold;
-    unsigned int flush_retry_initial_ms;
-    unsigned int flush_retry_max_ms;
-    int disable_background_flush;
-    int (*battery_callback)(void);
-    int battery_low_threshold;
-    honch_auto_properties_fn auto_properties_callback;
-    void *auto_properties_userdata;
-    honch_durability_mode_t durability_mode;
-} honch_config_t;
+```cmake
+find_package(honch_posix REQUIRED)
+target_link_libraries(app PRIVATE honch::honch_posix)
 ```
 
-Required fields:
-
-- `api_key`
-- `endpoint_url`
-- `device_model`
-- `firmware_version`
-- `queue_directory`
-
-Common defaults:
-
-| Field | Default |
-| --- | --- |
-| `device_id` | Generated and persisted when omitted. |
-| `environment` | `production`. |
-| `batch_size` | `20`, capped at `50`. |
-| `max_queued_events` | `1000`. |
-| `max_event_bytes` | `16384`. |
-| `transport_timeout_ms` | `10000`. |
-| `flush_interval_seconds` | `60`. |
-| `flush_event_threshold` | `30`. |
-| `durability_mode` | `HONCH_DURABILITY_SYNC_ALWAYS`. |
-
-Set `disable_background_flush` nonzero when you want explicit `honch_flush` calls to be the only delivery trigger.
-
-## 3. Send A First Event
+## 2. Configure And Send A First Event
 
 ```c
 #include "honch/honch.h"
 
-int main(void)
-{
-    honch_config_t config = {
-        .api_key = "project-key",
-        .endpoint_url = "https://i.honch.io",
-        .device_model = "linux-gateway",
-        .firmware_version = "1.0.0",
-        .environment = "production",
-        .queue_directory = ".honch-queue",
-        .durability_mode = HONCH_DURABILITY_SYNC_ALWAYS,
-    };
+honch_config_t config = {
+    .api_key = "your-api-key",
+    .endpoint_url = "https://i.honch.io",
+    .device_model = "linux-gateway",
+    .firmware_version = "1.0.0",
+    .queue_directory = "/var/lib/honch",
+};
 
-    honch_client_t *client = NULL;
-    honch_status_t status = honch_init(&client, &config);
-    if (status != HONCH_OK) {
-        return 1;
-    }
+honch_client_t *client = NULL;
+if (honch_init(&client, &config) != HONCH_STATUS_OK) {
+    return 1;
+}
 
-    honch_track(client, "app_started", "{\"source\":\"posix\"}");
-    honch_flush(client);
-    honch_shutdown(client);
+const honch_property_t props[] = { honch_prop("role", honch_str("developer")) };
+honch_identify(client, "local-user-001", props, 1);
+
+honch_session_start(client, "demo");
+honch_track(client, "button_pressed", NULL, 0);
+honch_session_end(client);
+
+honch_flush(client);
+honch_shutdown(client);
+```
+
+Required fields are `api_key`, `endpoint_url`, `device_model`, `firmware_version`, and `queue_directory`. Everything else falls back to the shared [defaults](/concepts#queueing-and-durability). `honch_init()` is synchronous — it validates config, reconciles the queue directory, persists identity, and queues `$device_boot` — but does no network I/O.
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `device_id` | generated + persisted | A random ID is created on first run if you do not set one. |
+| `environment` | `"production"` | |
+| `durability_mode` | `OS_BUFFERED` | `SYNC_ALWAYS` fsyncs every write for power-loss safety at a throughput cost. |
+| `flush_interval_seconds` | 120 | |
+| `flush_event_threshold` | 20 | |
+| `transport_timeout_ms` | 2500 | |
+| `connectivity_callback` | — | Return offline so ticks skip DNS/TLS and keep events pending. |
+
+## 3. Pump Delivery
+
+Call `honch_tick(client)` from a dedicated thread. It performs a synchronous HTTP POST on the calling thread and blocks up to `transport_timeout_ms`, so keep it off latency-sensitive paths.
+
+```c
+while (running) {
+    honch_tick(client);
+    sleep(1);
 }
 ```
 
-Expected result:
+`honch_flush(client)` forces queued batches out immediately — handy in short-lived processes before exit.
 
-- `.honch-queue/state/device_id` is created;
-- `.honch-queue/state/distinct_id` is created;
-- retryable failures stay under `.honch-queue/pending`;
-- permanent rejections move attempted events to `.honch-queue/dead`;
-- accepted events are consumed from `pending`.
+## 4. Inspect Local Storage
 
-## 4. Add Identity And Sessions
-
-```c
-honch_identify(client, "account-123", "{\"plan\":\"beta\"}");
-
-honch_session_start(client, "recording");
-honch_track(client, "recording_started", "{\"mode\":\"hdr\"}");
-honch_session_end(client);
-```
-
-Expected result: events after `identify` use the new `distinct_id`, and events tracked during a session include `$session_id`.
-
-## 5. Validate JSON Inputs
-
-Rules:
-
-- `properties_json` and `traits_json` must be JSON objects.
-- `value_json` in `honch_set_property` can be any valid JSON value.
-- Event names must be nonblank and no longer than 128 characters.
-- Distinct IDs must be nonblank and no longer than 256 characters.
-
-Invalid input returns `HONCH_ERROR_INVALID_ARGUMENT`. The POSIX SDK fails closed instead of silently dropping malformed properties.
-
-## 6. Inspect Local Storage
-
-The queue directory layout is:
+The queue is a directory tree you can read directly:
 
 ```text
-.honch-queue/
-  pending/
-  dead/
-  state/
-    device_id
-    distinct_id
-    firmware_version
+<queue_directory>/
+  pending/   events waiting to upload (one file each)
+  dead/      permanently rejected events
+  state/     device_id, distinct_id, firmware_version
 ```
 
-Durability modes:
+Events are written atomically (temp file then rename) and evicted oldest-first when the queue is full. Retryable failures leave events in `pending/`; permanent rejections move them to `dead/`. This visibility is the main reason to validate an integration here before moving to a constrained device.
 
-| Mode | Behavior |
-| --- | --- |
-| `HONCH_DURABILITY_SYNC_ALWAYS` | Writes event files with fsync for stronger crash safety. |
-| `HONCH_DURABILITY_OS_BUFFERED` | Keeps atomic rename behavior but skips per-event fsyncs. |
+## 5. Crash Breadcrumbs (Optional)
 
-When the queue is full, the oldest event is dropped to admit the newer event.
+`honch_install_error_handlers(queue_directory)` installs async-signal-safe handlers for `SIGABRT`, `SIGSEGV`, `SIGBUS`, `SIGILL`, and `SIGFPE`. They write a bounded breadcrumb file; the next `honch_init()` imports it as an `$error` event. The path is process-global, so use it with a single client.
 
-## 7. Confirm Transport
-
-The POSIX transport uses libcurl and sends compact chunks to:
+## Transport Contract
 
 ```text
 POST <endpoint_url>/capture
@@ -185,25 +116,29 @@ X-Honch-Project-Key: <api_key>
 X-Honch-Stream-Id: <stream_id>
 ```
 
-Use HTTPS for every environment, sending to the hosted endpoint (`https://i.honch.io`). Honch is a hosted service; there is no Capture endpoint you run yourself.
+Transport is libcurl with TLS verification enabled (peer and host); only `http`/`https` are allowed and redirects are not followed. Use `https://` in production.
 
-## 8. Run Examples
+## Examples
 
-```bash
-./build/example/posix_device/honch_posix_example
-./build/example/connected_camera/honch_connected_camera_example
-./build/example/posix_gpio/honch_posix_gpio_example
-```
+The repository ships runnable examples under `ports/posix/example/`: `posix_device` (the snippet above), `connected_camera`, `posix_gpio` (edge-tracking from a host GPIO source), and `identify_merge`.
 
-GPIO tracking is not part of Shared Core. Use a platform integration like `example/posix_gpio` to debounce platform signals and call `honch_track` from normal process context.
+## Public API
 
-## Troubleshooting
-
-| Symptom | Check |
+| Function | Purpose |
 | --- | --- |
-| `honch_init` returns invalid argument | Required config fields, queue directory, durability mode. |
-| Queue files remain in `pending` | Endpoint, network, project key, or retryable Capture response. |
-| Files move to `dead` | Capture permanently rejected the payload. |
-| No state files | Init did not complete or queue directory is not writable. |
-| Two processes conflict | Use one active client per queue directory. |
-| Events too large | Reduce property payload size or raise `max_event_bytes`. |
+| `honch_init(&client, &config)` | Create and initialize a client. |
+| `honch_track(client, event, props, count)` | Queue an event. |
+| `honch_identify(client, distinct_id, traits, count)` | Set identity; emits `$identify`. |
+| `honch_set_property(client, key, value)` | Emit `$set_property`. |
+| `honch_session_start(client, name)` / `honch_session_end(client)` | Bracket a session. |
+| `honch_report_error(client, &report, props, count)` | Queue an `$error`. |
+| `honch_install_error_handlers(queue_directory)` | Install crash-breadcrumb signal handlers. |
+| `honch_tick(client)` | Cooperative delivery step. |
+| `honch_flush(client)` | Send queued batches now. |
+| `honch_reset(client)` | Clear identity, session, and queue. |
+| `honch_shutdown(client)` | Emit `$device_shutdown`, final flush, free the client. |
+| `honch_get_device_id(client)` | Borrowed device-ID pointer. |
+| `honch_copy_device_id(client, buf, size)` | Copy the device ID into your buffer (thread-safe). |
+| `honch_status_string(status)` | Human-readable status text. |
+
+Calls return `honch_status_t` (`HONCH_STATUS_OK` on success), except `honch_get_device_id` and `honch_status_string`, which return `const char *`.

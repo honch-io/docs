@@ -1,32 +1,19 @@
 ---
 title: FAQ
-description: Practical troubleshooting for Honch SDK integrations.
+description: Short answers to common questions about the Honch SDKs.
 ---
 
-Use this page when something does not behave the way the guide said it should. Start with the symptom, then check the listed causes in order.
+For step-by-step fixes, see [Troubleshooting](/troubleshooting). For the full behavior, see [Shared Concepts](/concepts).
 
 ## Which SDK should I use?
 
-Use ESP-IDF for ESP32 firmware built with ESP-IDF, C/POSIX for embedded Linux or local C harnesses, MicroPython for firmware that can include `_honch_core`, Arduino ESP32 for ESP32 sketches, and React Native Relay for companion apps that forward data from devices without direct internet access.
+Match it to your platform: ESP-IDF for ESP32 firmware, C/POSIX for embedded Linux and gateways (and local development), MicroPython for MicroPython firmware, Arduino for ESP32 Arduino sketches (preview). If a device cannot reach the internet, pair it with the React Native relay. If none fit, send events directly with the [HTTP API](/http-api).
 
-If you only need to validate event behavior locally, use C/POSIX first. It gives you visible queue files and does not require flashing hardware.
+## I sent an event. What should happen?
 
-## I Sent An Event. What Should Happen?
+Initialization queues `$device_boot` immediately. Your `track()` adds an event to the local queue. On the next `tick()`/`flush()` while online, the SDK posts to `/capture` and Capture returns `204` (batch accepted) or `202` (chunk stored). The event then appears in your project's live events.
 
-The expected path is:
-
-1. SDK accepts the event.
-2. Event is written to local queue.
-3. Flush builds a compact upload message.
-4. Transport sends a chunk frame to `/capture`.
-5. Capture returns success, retry, or permanent rejection.
-6. SDK consumes, keeps, drops, or dead-letters the queued event based on that response.
-
-Do not debug the dashboard first. Debug this chain first.
-
-## What Endpoint Do SDKs Use?
-
-Current SDKs send compact chunk frames to:
+## What endpoint do the SDKs use?
 
 ```text
 POST /capture
@@ -35,124 +22,44 @@ X-Honch-Project-Key: <project_api_key>
 X-Honch-Stream-Id: <stream_id>
 ```
 
-Capture also accepts the same format on `/e` and `/chunks`.
+The default host is `https://i.honch.io`. Direct HTTP integrations post JSON to the same `/capture` path.
 
-## Should I Use HTTPS?
+## Should I use HTTPS?
 
-Yes. Send to the hosted HTTPS Capture endpoint (`https://i.honch.io`) for every environment — Honch is a hosted service, so there is no Capture endpoint you run yourself. To keep development data out of production, set `$environment` to `development` (or use a separate project key) rather than pointing at a different host.
+Yes, in production. The device ports verify the server certificate and provide no production way to disable it. Use plain HTTP only when intentionally talking to a local capture service during development.
 
-If HTTPS fails on firmware, check time sync and certificate setup before blaming event encoding.
+## What gets collected automatically?
 
-## Events Are Queued But Not Appearing
+A fixed context on every event: `$device_id`, `$device_model`, `$firmware_version`, `$sdk_platform`, `$sdk_version`, `$environment`. Conditionally: `$session_id` during a session, `$battery_level` if you supply a battery callback, and `$wifi_rssi` if your port supplies it. The SDK does not auto-collect heap, uptime, hardware revision, or location.
 
-Check in this order:
+## Can user properties override SDK properties?
 
-1. Confirm the SDK initialized successfully.
-2. Confirm the endpoint URL is the base host and the SDK appends `/capture`.
-3. Confirm Wi-Fi or network connectivity.
-4. Confirm your API key.
-5. Check whether Capture returned `401`, `4xx`, `409`, `429`, or `5xx`.
-6. Send a test payload to `/capture/validate` to confirm your key is accepted and your payload decodes — it runs the full check without storing anything.
+No. If an event includes a reserved key (an SDK-owned `$` key or `distinct_id`), the `track()` call is **rejected** with an invalid-argument error. Reserved keys are never silently overwritten — rename your property.
 
-What the queue means:
+## What property values can I pass?
 
-| Queue state | Meaning |
-| --- | --- |
-| Pending grows | Delivery is not succeeding or responses are retryable. |
-| Dead-letter grows | Capture or the SDK classified events as permanently rejected. |
-| Queue drains | Capture accepted the message. |
-| RAM events disappear after reset | They were not persisted before power loss. |
+Typed values: null, boolean, integer, float, string, bytes, arrays, and maps (nested). Up to 64 properties per event; event names up to 128 bytes.
 
-## What Does HTTP 401 Mean?
+## Which errors are retryable?
 
-Capture rejected the project key. SDKs treat this as an auth failure and do not keep retrying the same message indefinitely.
+`408`, `409`, `429`, `5xx`, and transport failures are retryable — events stay queued and retry with backoff (1 s to 5 min, ±25% jitter). `401` and other `4xx` are permanent; the batch is dropped or dead-lettered.
 
-Fix:
+## What happens when the device is offline?
 
-1. Replace the configured project key.
-2. Restart or reinitialize the SDK if needed.
-3. Send a new event.
-4. Flush again.
+Events stay queued. Supply a connectivity callback so the SDK skips DNS/TLS work while offline; when connectivity returns, queued events flush with backoff. Nothing is lost as long as the queue (RAM by default, drop-oldest past `max_queued_events`) has not overflowed or been cleared by a reset.
 
-Previously rejected events may already be dropped or dead-lettered depending on the port.
+## What happens on reset?
 
-## What Errors Are Retryable?
+`reset()` clears identity, the active session, and the local queue, and emits no event. With a configured `device_id`, identity returns to it; otherwise the SDK generates a new random `$device_id`. Use it at a factory-reset or logout boundary.
 
-Network failures, timeouts, rate limits, `409`, and `5xx` responses are retryable. The shared retry policy starts at 1 second, caps at 5 minutes, and adds plus or minus 25% jitter.
+## Why does MicroPython need a user C module?
 
-Permanent rejections are not useful to retry unchanged. Fix the payload, key, endpoint, or server-side expectation, then send a new event.
+The MicroPython wrapper is a thin Python layer over the same C core, bound through the `_honch_core` user C module. The module must be compiled into your firmware — there is no pure-Python implementation. See the [MicroPython guide](/sdks/micropython).
 
-## What Gets Collected Automatically?
+## Can I call `track()` from an ISR?
 
-Every SDK-owned event includes device identity, device model, firmware version, SDK platform, SDK version, and environment. Sessions add `$session_id`. Battery-aware SDKs can add `$battery_level` and `$battery_low`. Embedded SDKs can add connectivity and Wi-Fi signal events or properties where supported.
+No. `track()` can allocate, and `tick()`/`flush()` do blocking network I/O. From an ISR, push minimal data (like a pin number) onto a queue and call `track()` from a normal task. See the [ESP-IDF GPIO pattern](/sdks/esp-idf#5-track-gpio-safely).
 
-The SDK does not stamp noisy values such as free heap, uptime, or hardware revision on every event by default.
+## How does the relay acknowledge a device?
 
-## Can User Properties Override SDK Properties?
-
-No. SDK-owned auto properties win over user-supplied values with the same keys. Reserved keys such as `$device_id`, `$sdk_platform`, `$sdk_version`, and `$session_id` should be treated as SDK-owned.
-
-If you need a custom version of one of those values, use a different property name.
-
-## What Property Format Should I Pass?
-
-C, ESP-IDF, and Arduino accept JSON strings. C/POSIX and MicroPython validate JSON-shaped public inputs at the API boundary. MicroPython accepts dictionaries and JSON-compatible values, then serializes them before calling `_honch_core`.
-
-Rules that avoid most problems:
-
-- Use JSON objects for event properties and identify traits.
-- Keep event names stable and short.
-- Keep property names stable across firmware versions.
-- Avoid large nested blobs.
-- Use numeric values for counts, durations, and levels.
-
-## What Happens When The Device Is Offline?
-
-Events are queued locally before upload. Retryable transport failures keep events queued. Permanent capture rejections are dropped or moved to dead-letter storage depending on the port.
-
-Durability varies by SDK:
-
-| SDK | Offline storage |
-| --- | --- |
-| ESP-IDF | RAM-first queue with NVS overflow. Permanent capture rejections are consumed rather than written to NVS dead-letter storage. RAM-resident events can be lost on reset. |
-| C/POSIX | File-backed queue under `queue_directory`. |
-| MicroPython | File-backed queue under `queue_directory`. |
-| Arduino ESP32 | ESP32 `Preferences` queue. |
-| React Native Relay | MMKV or custom durable mobile store. |
-
-## What Happens On Reset?
-
-`reset` clears queued data, clears session state, resets low-battery state, and restores or rotates identity depending on whether a device ID was explicitly configured. Treat it as a factory-reset boundary, not as a normal session action.
-
-If you want to end a user flow, use `session_end`. If you want to disassociate an analytics identity, use reset deliberately and expect queue state to clear.
-
-## Why Does MicroPython Require A User C Module?
-
-The MicroPython wrapper deliberately stays thin. Shared Core owns queueing, identity, compact encoding, retry classification, and relay packetization. Firmware must include `_honch_core`; installing the Python wrapper alone is not enough.
-
-Check:
-
-```python
-import _honch_core
-import honch
-```
-
-Both imports should succeed before you debug client configuration.
-
-## Can I Call `track` From An ISR?
-
-Do not call full SDK tracking APIs from ISR context. Tracking can validate input, take locks, allocate, encode, and queue.
-
-For ESP-IDF GPIO, use `honch_track_gpio`. The ISR only queues the pin number, and a worker task later calls `honch_track`.
-
-## How Many GPIO Pins Can ESP-IDF Track?
-
-The ESP-IDF GPIO helper supports up to 8 pins and applies 50 ms debounce. It configures pins as inputs with pull-up enabled and emits an event with a `pin` property.
-
-If GPIO events do not appear, check pin number, edge mode, pin conflicts, and whether registration succeeded.
-
-## How Does React Native Relay ACK A Device?
-
-The mobile relay ACKs a firmware message only after all relay chunks pass validation and the completed compact message is durably stored on mobile. Capture upload success is tracked separately by the relay queue and retry scheduler.
-
-If the device never receives ACKs, check frame checksum, offsets, source type, duplicate chunks, durable store writes, and native BLE writes.
+Your app hands each BLE frame to the relay; the relay durably stores it and returns ACK bytes (a version byte plus a big-endian sequence number). Your app writes those bytes to the device's ACK characteristic. The relay never touches Bluetooth itself — that stays host-owned.

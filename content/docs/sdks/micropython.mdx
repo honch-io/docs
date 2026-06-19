@@ -1,184 +1,115 @@
 ---
 title: MicroPython
-description: Build firmware with _honch_core, install the Python wrapper, and verify MicroPython events.
+description: Build firmware with the _honch_core user C module and use the Honch Python wrapper.
 ---
 
-The MicroPython SDK is a thin Python wrapper around the `_honch_core` user C module. It is not a standalone pure-Python SDK. The firmware image must include the Honch user module so Shared Core can own identity, queueing, retry, compact encoding, and relay packetization.
+The MicroPython port is a thin Python wrapper over the same C core, bound through a user C module named `_honch_core`. It is not pure Python and not standalone: the module must be compiled into your MicroPython firmware. CircuitPython is out of scope.
 
-Status: available, Shared Core behavior `0.2.0`.
+<Callout title="Status">Stable · `0.2.4`. PyPI package `honch-micropython`. Requires firmware built with the `_honch_core` user C module.</Callout>
 
 ## Before You Start
 
-You need:
-
-| Requirement | Notes |
-| --- | --- |
-| MicroPython checkout | Build from source for the target port. |
-| Honch user module | `ports/micropython/usermod/honch/micropython.cmake`. |
-| Python wrapper files | Frozen through `manifest.py` or installed with `mip`. |
-| Queue directory | Writable filesystem path on the device. |
-| Network stack | Board-specific; transport imports `urequests`. |
-| Project key | Sent as `X-Honch-Project-Key`. |
-
-Installing the wrapper files without `_honch_core` will not work.
+- You build MicroPython firmware yourself with the Honch user C module included. The Python wrapper alone cannot work without it — importing `honch` without `_honch_core` raises `ImportError`.
+- The wrapper rejects host-side hooks. Passing `platform`, `transport`, `battery_callback`, or `auto_properties_callback` to the constructor raises `InvalidArgumentError` — those adapters live in the C module.
 
 ## 1. Build Firmware With `_honch_core`
 
-For the Unix port:
+Point your MicroPython build at the module's CMake file with `USER_C_MODULES`:
 
 ```bash
+# Unix port (handy for host testing)
 make -C ports/unix \
   USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake
 ```
 
-For board firmware, pass the same user module path and freeze the wrapper:
+For a board, also freeze the Python wrapper into the image:
 
 ```bash
-make BOARD=MYBOARD \
+make -C ports/esp32 BOARD=ESP32_GENERIC \
   USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake \
   FROZEN_MANIFEST=/path/to/SDK/ports/micropython/manifest.py
 ```
 
-Expected result: importing `_honch_core` succeeds in MicroPython.
+The user C module does not set firmware-global options such as the GC heap size — keep that in your board or host configuration.
 
 ## 2. Install Or Freeze The Wrapper
 
-The wrapper can be frozen with the manifest above. `mip` can also install the wrapper files from `ports/micropython/package.json`, but the firmware still needs `_honch_core`.
+The five `honch/*.py` wrapper modules ship on PyPI as `honch-micropython` and can be frozen via the manifest (recommended for boards) or installed with `mip`. If the wrapper is frozen into the firmware, do not also copy it into `/lib`.
 
-Expected result: importing `honch` succeeds.
-
-## 3. Create A Queue Directory
-
-Pick a path that survives reboot on your board:
-
-```text
-/honch/
-  pending/
-  dead/
-  state/
-```
-
-The SDK creates subdirectories and files as needed. Make sure the filesystem is mounted before creating the client.
-
-## 4. Configure The Client
-
-Required:
-
-- `api_key`
-- `endpoint_url`
-- `device_model`
-- `firmware_version`
-- `queue_directory`
-
-Useful options:
-
-| Option | Default |
-| --- | --- |
-| `device_id` | Generated and persisted when omitted. |
-| `environment` | `production`. |
-| `batch_size` | `20`, capped at `50`. |
-| `max_queued_events` | `1000`. |
-| `max_event_bytes` | `16384`. |
-| `transport_timeout_ms` | `10000`. |
-| `flush_interval_seconds` | `60` in wrapper config, but background flush is disabled by the current user module. |
-| `flush_event_threshold` | `30`. |
-| `battery_low_threshold` | `15`. |
-
-Python `platform=`, `transport=`, `battery_callback=`, and `auto_properties_callback=` hooks are rejected. Board behavior belongs in the C user module.
-
-## 5. Send A First Event
+## 3. Configure And Send A First Event
 
 ```python
 import honch
 
 client = honch.Honch(
-    api_key="project-key",
+    api_key="your-api-key",
     endpoint_url="https://i.honch.io",
-    device_model="pico-w",
+    device_id="dev-board-001",
+    device_model="dev-board",
     firmware_version="1.0.0",
-    queue_directory="/honch",
+    event_buffer=bytearray(8192),
 )
 
-client.track("app_started", {"source": "micropython"})
+client.identify("user-123", {"plan": "beta"})
+client.session_start("demo")
+client.track("button_pressed", {"button": "boot"})
+client.session_end()
 client.flush()
 client.shutdown()
 ```
 
-Expected result:
+Required keyword arguments: `api_key`, `endpoint_url`, `device_id`, `device_model`, `firmware_version`, and `event_buffer` (a `bytearray` sized to your `max_event_bytes`, default 8192). Optional arguments map to the shared [defaults](/concepts#queueing-and-durability): `environment`, `batch_size`, `max_queued_events`, `max_event_bytes`, `transport_timeout_ms`, `flush_interval_seconds`, `flush_min_interval_ms`, `flush_event_threshold`, `flush_retry_initial_ms`, `flush_retry_max_ms`, `battery_low_threshold`, and `connectivity_callback`.
 
-- state files are written under `/honch/state`;
-- retryable failures stay under `/honch/pending`;
-- permanent rejections move attempted events to `/honch/dead`;
-- accepted events are consumed.
+Property values may be `None`, `bool`, `int`, `float`, `str`, `bytes`, `list`/`tuple`, or `dict` (with string keys), nested.
 
-Call `flush()` explicitly. The current user module disables background flushing even though the Python config object exposes interval and threshold fields.
+## 4. Pump Delivery, Identity, And Connectivity
 
-## 6. Add Identity, Sessions, And Connectivity
+There is no background thread. Call `client.tick()` on an interval from your main loop, and `client.flush()` to force a send.
 
 ```python
-client.identify("account-123", {"plan": "beta"})
-
-client.session_start("recording")
-client.track("recording_started", {"mode": "hdr"})
-client.session_end()
-
-client.connected()
-client.disconnected()
-client.connectivity_changed(True)
+while True:
+    client.tick()
+    time.sleep(1)
 ```
 
-Connectivity methods suppress duplicate states and queue `$connectivity_change` only when the state changes.
+Connectivity is explicit. `client.connectivity_changed(connected)` (and the `connected()` / `disconnected()` shorthands) records the state and emits a `$connectivity_change` event with a `state` property of `"connected"` or `"disconnected"`. When the wrapper believes it is offline, `flush()` raises `OfflineError` and `tick()` is a no-op, so it never spends time on DNS/TLS.
 
-## 7. Handle Errors
+## 5. Handle Errors
 
-The wrapper maps `_honch_core` statuses into Python exceptions:
+```python
+client.report_error("sensor read failed", severity="error", component="imu")
 
-| Exception | Meaning |
-| --- | --- |
-| `InvalidArgumentError` | Bad config, event name, identity, properties, or JSON value. |
-| `StorageError` | Storage I/O or queue-full condition. |
-| `TransportError` | Transport or timeout failure. |
-| `RateLimitedError` | Capture rate limit. |
-| `ServerError` | Capture server error. |
-| `RejectedError` | Permanent capture rejection. |
-| `NotInitializedError` | Client missing or already shut down. |
-| `HonchError` | Generic SDK error. |
+# Or wrap a call so exceptions are reported as fatal and re-raised:
+client.run_with_error_tracking(read_sensors)
 
-`CompressionUnavailableError` exists in the public wrapper exports for compatibility, but the current compact chunk path does not expose a compression feature.
-
-## 8. Verify Runtime Behavior
-
-Check these before adding more events:
-
-1. `import _honch_core` succeeds.
-2. `import honch` succeeds.
-3. Client creation does not raise.
-4. Queue files appear below `queue_directory`.
-5. `flush()` reaches the configured endpoint or leaves retryable files pending.
-
-The transport imports `urequests` and sends compact chunks to:
-
-```text
-POST <endpoint_url>/capture
-Content-Type: application/vnd.honch.chunk
-X-Honch-Project-Key: <api_key>
-X-Honch-Stream-Id: <stream_id>
+# Or hook the interpreter's excepthook (idempotent):
+client.install_error_hook()
+# ... later ...
+client.uninstall_error_hook()
 ```
+
+Wrapper exceptions subclass `HonchError`: `InvalidArgumentError`, `StorageError`, `RejectedError`, `NotInitializedError`, `CompressionUnavailableError`, and `TransportError` — with `OfflineError`, `RateLimitedError`, and `ServerError` subclassing `TransportError`.
 
 ## Examples
 
-- `examples/basic.py` tracks identity, a session, a custom event, flush, and shutdown.
-- `examples/persistent_queue.py` queues an event before network delivery and tolerates retryable flush errors.
-- `examples/pico_w_main.py` is a Pico W example with Wi-Fi, identity, sessions, nested properties, reserved-property conflict checks, and flush.
+`ports/micropython/examples/` includes `basic.py` (above), a persistent-queue example, and a Pico W example.
 
-## Troubleshooting
+## Public API
 
-| Symptom | Check |
+| Method | Purpose |
 | --- | --- |
-| `ImportError: _honch_core` | Firmware was not built with the Honch user module. |
-| `ImportError: honch` | Wrapper files were not frozen or installed. |
-| Client creation fails | Required config values or queue directory. |
-| Flush does nothing | Network setup, `urequests`, endpoint URL, project key. |
-| Files stay in `pending` | Retryable transport or Capture response. |
-| Files move to `dead` | Capture permanently rejected the payload. |
-| Out-of-memory behavior | Confirm C heap reservation for the target port. |
+| `Honch(**config)` | Construct and initialize the client. |
+| `track(event, properties=None)` | Queue an event. |
+| `identify(distinct_id, traits=None)` | Set identity; emits `$identify`. |
+| `set_property(key, value=None)` | Emit `$set_property`. |
+| `session_start(name=None)` / `session_end()` | Bracket a session. |
+| `report_error(message, *, severity, error_type, component, code, backtrace, properties)` | Queue an `$error`. |
+| `run_with_error_tracking(fn, *args, **kwargs)` | Run `fn`, report exceptions as fatal, re-raise. |
+| `install_error_hook()` / `uninstall_error_hook()` | Wrap/unwrap `sys.excepthook`. |
+| `connectivity_changed(connected)` / `connected()` / `disconnected()` | Report connectivity; emits `$connectivity_change`. |
+| `tick()` | Cooperative delivery step. |
+| `flush()` | Send queued batches now (raises `OfflineError` when offline). |
+| `reset()` | Clear identity, session, and queue. |
+| `shutdown()` | Emit `$device_shutdown`, final flush, tear down. |
+| `get_device_id()` | Return the device ID. |
+| `queue_stats()` | Return queue depth and counters as a dict. |

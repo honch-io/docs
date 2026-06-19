@@ -1,0 +1,43 @@
+---
+title: Security
+description: Transport security, credentials, and data handling across the Honch SDKs.
+---
+
+This page covers what the SDKs do to keep data secure in transit and how to integrate without weakening those guarantees.
+
+## Transport Is TLS By Default
+
+Device SDKs verify the server certificate and do not expose a production path that disables verification:
+
+| Port | TLS behavior |
+| --- | --- |
+| ESP-IDF | Uses the ESP-IDF certificate bundle for server verification. There is no option to turn verification off. |
+| C / POSIX | libcurl with peer and host verification enabled; only `http`/`https` schemes, no redirect following. |
+| Arduino | `WiFiClientSecure` with your `rootCaPem`. `insecureSkipTlsVerify` exists for local testing only and logs a warning. |
+
+Always configure the endpoint with `https://` in production. Plain HTTP is only appropriate when you intentionally point an SDK at a local capture service during development.
+
+## The Project Key
+
+Your project API key authenticates uploads. It is sent as the `X-Honch-Project-Key` header — a transport credential, never part of the event body:
+
+```text
+X-Honch-Project-Key: <project_api_key>
+```
+
+A missing or invalid key returns `401`, which the SDK treats as a **permanent** failure: it stops retrying that batch rather than hammering the endpoint with a bad credential. Keep the key out of logs and source control, scope it to capture, and rotate it if it leaks.
+
+## Data Handling
+
+- **You choose what is collected.** Beyond the automatic context (`$device_id`, `$device_model`, firmware/SDK/platform/environment, and optional session/battery/Wi-Fi signal), the SDK sends only the events and properties you track. It does not auto-collect heap, uptime, hardware revision, or location.
+- **Reserved keys are rejected, not overwritten.** An event that reuses an SDK-owned key fails with an invalid-argument error, so the SDK's trusted context cannot be spoofed by user properties.
+- **Timestamps are on-device event time.** Events carry when they happened on the device, normalized to real time at flush — not upload or relay time.
+- **Identity is yours to assign.** `$device_id` is hardware identity; `distinct_id` is set by `identify()`. The anonymous-to-identified merge is driven by `$anon_distinct_id` and happens in Honch, not on the device.
+
+## Durability And Power Loss
+
+The default RAM queue is volatile: a reset or power loss clears unsent events. Where a port supports persistence, the `SYNC_ALWAYS` durability mode fsyncs each write so queued events survive an abrupt power cut, at a throughput cost. Choose it when losing buffered events is unacceptable; otherwise the default `OS_BUFFERED` mode is faster. See each SDK guide for how to enable durable storage.
+
+## Relays
+
+Relay uploads add `X-Honch-Relay-*` headers identifying the relay but use the same TLS and project-key model. A relay must preserve the device's compact message bytes exactly; it never inspects or rewrites event contents. Bluetooth is owned by the host app — the relay packages never request BLE permissions or touch the radio.

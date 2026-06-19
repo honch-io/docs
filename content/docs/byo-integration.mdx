@@ -97,6 +97,7 @@ Honch recognizes a set of standard lifecycle events. Emitting them gives you dev
 | `$battery_low` | Battery drops below your threshold | `level` (int) |
 | `$connectivity_change` | Network state changes | `state` (string) |
 | `$error` | An actionable recoverable error occurs | your own diagnostic properties |
+| `$device_reset` | Device returned to a factory state | — |
 | `$device_shutdown` | Device or app shuts down | — |
 
 The reserved lifecycle property names (`reset_reason`, `session_name`, `previous_version`, `new_version`, `state`, `$battery_level`, `$wifi_rssi`) are allowed as event properties. They are not context keys, so put them inside the event's `properties`. The promoted context keys (`$device_id`, `distinct_id`, and so on) are the ones you must not set per-event.

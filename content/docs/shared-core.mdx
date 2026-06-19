@@ -1,0 +1,77 @@
+---
+title: Shared Core
+description: The canonical portable C core that every Honch SDK wraps — API, config, status codes, and platform interfaces.
+---
+
+`core/` is the portable C library that defines Honch SDK behavior. Every platform port — ESP-IDF, C/POSIX, MicroPython, Arduino — wraps these `honch_core_*` functions and supplies the platform adapters they need. You only call the core API directly when building a new port or embedding the core yourself; most integrations use a port's friendlier wrapper. The behavior is documented in [Shared Concepts](/concepts); this page is the API reference.
+
+## What The Core Owns
+
+Event semantics and validation, typed properties, identity and `identify`/`reset`, sessions, lifecycle events, the bounded drop-oldest queue policy, retry/drop classification, the compact wire-format encoder, and chunk packetization. Ports provide storage, transport, clock, randomness, and packaging — they do not redefine product semantics.
+
+Identity persistence (`distinct_id`, device ID, firmware version) is a *port* responsibility: the core declares the state-storage contract and each port implements it (file-backed on C/POSIX, NV-backed hooks on the device ports).
+
+## Core API
+
+```c
+honch_status_t honch_core_init(honch_client_t **client, const honch_core_config_t *config);
+honch_status_t honch_core_track(honch_client_t *, const char *event_name,
+                                const honch_property_t *properties, size_t property_count);
+honch_status_t honch_core_identify(honch_client_t *, const char *distinct_id,
+                                   const honch_property_t *traits, size_t trait_count);
+honch_status_t honch_core_set_property(honch_client_t *, const char *key, honch_value_t value);
+honch_status_t honch_core_session_start(honch_client_t *, const char *session_name);
+honch_status_t honch_core_session_end(honch_client_t *);
+honch_status_t honch_core_report_error(honch_client_t *, const honch_error_report_t *,
+                                       const honch_property_t *properties, size_t property_count);
+honch_status_t honch_core_tick(honch_client_t *);
+honch_status_t honch_core_flush(honch_client_t *);
+honch_status_t honch_core_pause_uploads(honch_client_t *);
+honch_status_t honch_core_resume_uploads(honch_client_t *);
+honch_status_t honch_core_reset(honch_client_t *);
+honch_status_t honch_core_shutdown(honch_client_t *);
+const char    *honch_core_get_device_id(honch_client_t *);
+honch_status_t honch_core_copy_device_id(honch_client_t *, char *buffer, size_t buffer_size);
+honch_status_t honch_core_get_queue_stats(honch_client_t *, honch_queue_stats_t *stats);
+const char    *honch_status_string(honch_status_t status);
+```
+
+`honch_core_init` is synchronous and performs no network I/O: it validates config, derives identity, reconciles the queue, and queues `$device_boot`. `honch_core_tick` sends at most one chunk; `honch_core_flush` sends up to `flush_max_batches` batches. Uploads can be gated with the pause/resume calls.
+
+## Typed Values
+
+Property values are typed. `honch_value_t` and `honch_property_t` come from the wire-format layer, with inline constructors:
+
+```c
+honch_null()            honch_bool(b)        honch_u64(n)    honch_i64(n)
+honch_f32(x)            honch_f64(x)         honch_str(s)    honch_strn(s, len)
+honch_bytes(p, len)     honch_array(...)     honch_map(...)
+honch_prop(key, value)  honch_pair(key, value)
+```
+
+Limits: up to 64 properties per event, event names up to 128 bytes, `distinct_id` up to 256 bytes.
+
+## Status Codes
+
+`honch_status_t` runs from `HONCH_STATUS_OK` through `HONCH_STATUS_ERROR_OFFLINE` and covers invalid argument, not-initialized / already-initialized, no-memory, queue-full, I/O, transport, timeout, rate-limited, server, rejected, and offline conditions. Short aliases (`HONCH_OK`, `HONCH_ERROR_INVALID_ARGUMENT`, and so on) are provided. Use `honch_status_string()` for human-readable text. Ports map these onto their own return types (for example ESP-IDF's `honch_err_t`).
+
+## Configuration
+
+`honch_core_config_t` carries the tunables documented in [Shared Concepts](/concepts#queueing-and-durability) (`batch_size`, `max_queued_events`, `max_event_bytes`, the flush and retry timings, `battery_low_threshold`, `durability_mode`, `environment`, `endpoint_url`), plus the adapter tables and callbacks below. A field left zero takes the core default.
+
+## Platform Interfaces
+
+A port supplies these op tables so the core stays platform-free:
+
+| Interface | Provides |
+| --- | --- |
+| `honch_platform_ops_t` | `now_ms`, `uptime_ms`, `random_bytes`, `log`, and mutex lock/unlock/create/destroy. |
+| `honch_state_storage_ops_t` | Durable key/value reads and writes for identity and firmware version. |
+| `honch_event_queue_ops_t` | The event queue (the RAM queue is the default; ports can substitute a durable one). |
+| `honch_transport_ops_t` | The HTTP chunk upload. |
+
+Optional callbacks: `auto_properties_fn` (supply extra properties; only `$wifi_rssi` among reserved keys is honored), `connectivity_fn` (report online/offline so the core can gate uploads), and `battery_callback` (return 0–100 to enable `$battery_level` / `$battery_low`).
+
+## Building A Port
+
+If you are bringing Honch to a new platform, implement the four op tables, set the required config fields, and forward your platform's API to the `honch_core_*` functions. The repository's `ports/posix` is the clearest reference implementation, and the cross-SDK conformance fixtures in `spec/conformance/` pin the behavior your port must reproduce.

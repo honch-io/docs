@@ -7,11 +7,16 @@
     "concepts",
     "---SDKs---",
     "...sdks",
-    "---Build Your Own---",
-    "http-api",
+    "---Build Your Own Integration---",
     "byo-integration",
+    "http-api",
     "wire-format",
+    "---Reference---",
+    "shared-core",
+    "security",
+    "production-checklist",
     "---Resources---",
+    "troubleshooting",
     "faq"
   ]
 }

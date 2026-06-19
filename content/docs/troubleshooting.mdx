@@ -1,0 +1,63 @@
+---
+title: Troubleshooting
+description: Symptom-first fixes for the most common Honch SDK integration issues.
+---
+
+Find your symptom, confirm the cause, apply the fix. For the underlying behavior, see [Shared Concepts](/concepts).
+
+## Events Queue But Never Upload
+
+The SDK has no background thread — uploads only happen when you pump them.
+
+- **Are you calling `tick()`?** Create a task/thread that calls `tick()` periodically, and `flush()` when you want to force a send. Without this, events sit in the queue forever.
+- **Is the device online?** If you supplied a `connectivity_callback` that reports offline, `tick()` does nothing and `flush()` returns an offline status by design. Confirm the callback reflects real connectivity.
+- **Is the clock set?** Uploads still work before time sync (timestamps are normalized at flush), so this is not a blocker — but verify the network path itself with a `flush()` and watch for a `POST /capture`.
+
+## Upload Returns 401
+
+The project key is missing or invalid. The SDK treats `401` as permanent and stops retrying that batch.
+
+- Confirm `X-Honch-Project-Key` carries the correct key and that it is scoped to capture.
+- Check you are pointed at the right endpoint/project.
+- Rotate the key if it may have leaked, and reconfigure.
+
+## Which Failures Retry?
+
+| Result | HTTP | Behavior |
+| --- | --- | --- |
+| Retryable | 408, 409, 429, 5xx, transport/timeout | Events stay queued; backoff 1 s → 5 min with ±25% jitter, honoring `Retry-After`. |
+| Permanent | 401, other 4xx | Batch is dropped or dead-lettered so it cannot block the queue. |
+
+If events are disappearing, you are likely getting a permanent rejection — inspect the request body and headers against the [HTTP API](/http-api) or [Wire Format](/wire-format).
+
+## `track()` Returns Invalid Argument
+
+Usually a reserved key. Event properties may not reuse an SDK-owned key (`$device_id`, `$session_id`, `$battery_level`, `distinct_id`, and the other `$` context keys) — those are rejected, not overwritten. Rename your property. The same status also covers an empty/oversized event name (max 128 bytes) or an event that exceeds `max_event_bytes`.
+
+## The Tick Task Crashes Or Resets The Device (ESP-IDF / Arduino)
+
+The TLS handshake needs stack headroom. Create your delivery task with **at least 8192 bytes** of stack. A too-small stack corrupts during the handshake and surfaces as bogus TLS or memory errors. Never call `tick()`/`flush()` from an ISR or a high-priority/real-time path — they do synchronous network I/O and can block up to `transport_timeout_ms`.
+
+## Tracking A GPIO Press
+
+There is no GPIO helper, and you must not call `track()` from an ISR. Use the host-owned pattern: the ISR pushes the pin number onto a FreeRTOS queue, and a normal task drains it and calls `honch_track("button_pressed", ...)`. See the [ESP-IDF GPIO section](/sdks/esp-idf#5-track-gpio-safely).
+
+## Timestamps Look Wrong
+
+Before the device clock is set, the SDK stamps boot-relative time and normalizes it to real time at flush. If timestamps are off, confirm NTP/SNTP runs and the system clock reads a real wall-clock time (at or after 2020-01-01) before steady-state operation.
+
+## Events Lost After A Reset Or Power Cut
+
+The default queue is RAM-only and clears on reset. Wire a durable queue/state adapter (file-backed on C/POSIX; NV-backed on the device ports), and use `SYNC_ALWAYS` if you must survive abrupt power loss. See [Security → Durability](/security#durability-and-power-loss).
+
+## MicroPython: `ImportError` On `import honch`
+
+The wrapper requires firmware built with the `_honch_core` user C module. Rebuild MicroPython with `USER_C_MODULES` pointing at the module's CMake file. See the [MicroPython guide](/sdks/micropython).
+
+## Relay: Device Never Gets An ACK
+
+The relay returns ACK bytes only after a frame is durably stored, and your app must write them to the device's ACK characteristic. Confirm your `acknowledge` callback actually performs the BLE write — the relay does not touch Bluetooth itself.
+
+## Still Stuck?
+
+Validate your payload without storing anything by posting to `POST /capture/validate` — it returns the expanded events so you can see exactly how Honch interprets your request. Then check the [FAQ](/faq).

@@ -1,245 +1,161 @@
 ---
 title: Quickstart
-description: Get from a fresh SDK checkout to a verified first Honch event.
+description: Pick an SDK, send one event, and confirm it reaches Honch.
 ---
 
-This guide is the shortest useful path through the SDKs. Pick the runtime your device can support, send one event, then verify that the SDK queued or delivered it before you add product-specific tracking.
+The goal of this page is one verified event. Pick your SDK, set five values, send a single event, and confirm it arrives. Deeper configuration lives on each SDK's guide.
 
-## 1. Choose The SDK
+## 1. Set Your Capture Values
 
-| Target | Use | Start here |
+Every integration needs the same handful of values:
+
+| Value | Example | Notes |
 | --- | --- | --- |
-| ESP32 firmware built with ESP-IDF | ESP-IDF component | [ESP-IDF guide](/sdks/esp-idf) |
-| Embedded Linux, POSIX device process, or local C harness | C/POSIX SDK | [C/POSIX guide](/sdks/c-posix) |
-| MicroPython firmware with custom user modules | MicroPython SDK plus `_honch_core` | [MicroPython guide](/sdks/micropython) |
-| ESP32 Arduino sketches | Arduino ESP32 library | [Arduino guide](/sdks/arduino) |
-| BLE/offline device forwarding through a companion app | React Native Relay | [React Native Relay guide](/sdks/react-native-relay) |
-| A platform we don't ship an SDK for, or you'd rather not use one | Build your own client over the HTTP JSON API | [Build Your Own Integration](/byo-integration) |
+| Project API key | `your-project-key` | Sent as the `X-Honch-Project-Key` header. |
+| Endpoint | `https://i.honch.io` | SDKs append `/capture`. Use HTTPS in production. |
+| Device model | `demo-board` | Static per product. |
+| Firmware version | `1.0.0` | Drives `$firmware_update` when it changes. |
+| Environment | `production` | Optional; defaults to `production`. Use `development` for tests. |
 
-If you are not sure, start with C/POSIX on your development machine. It exercises the same shared behavior as the embedded ports without flashing hardware.
-
-Not using an official SDK? You can POST plain JSON straight to Capture from any host that makes HTTPS requests — a mobile app, a backend, or the browser. See [Build Your Own Integration](/byo-integration) and the [HTTP JSON API](/http-api). The rest of this quickstart covers the official SDKs.
-
-## 2. Set Your Capture Values
-
-Every direct-upload SDK needs the same product values:
-
-| Value | Example | Why it matters |
-| --- | --- | --- |
-| Project API key | `project-key` | Sent as `X-Honch-Project-Key`. |
-| Capture endpoint | `https://i.honch.io` | SDKs append `/capture`. |
-| Device model | `demo-board` | Lets you filter by hardware type. |
-| Firmware version | `1.0.0` | Drives firmware rollout and update events. |
-| Environment | `production` | Defaults to `production` when omitted. |
-
-Always send to the hosted HTTPS endpoint (`https://i.honch.io`). To keep development data separate from production, set the environment to `development` or use a separate project key — Honch is a hosted service, so there is no endpoint you run yourself.
-
-## 3. Send A First Event
+## 2. Send A First Event
 
 ### ESP-IDF
 
-Install the component from an ESP-IDF project:
-
 ```bash
-idf.py add-dependency "honch-io/honch^0.1.0"
+idf.py add-dependency "honch/honch^0.2.4"
 ```
-
-Initialize NVS before Honch, then track and flush:
 
 ```c
 #include "honch.h"
-#include "nvs_flash.h"
+static uint8_t buf[16384];
 
-static uint8_t event_buffer[16384];
-
-void app_main(void)
-{
-    nvs_flash_init();
-    // Initialize Wi-Fi and time sync before expecting delivery.
-
-    honch_config_t config = {
-        .api_key = CONFIG_HONCH_API_KEY,
-        .host = "https://i.honch.io",
-        .device_model = "demo-board",
-        .firmware_version = "1.0.0",
-        .event_buffer = event_buffer,
-        .event_buffer_size = sizeof(event_buffer),
-    };
-
-    if (honch_init(&config) == HONCH_OK) {
-        honch_track("app_started", "{\"source\":\"esp-idf\"}");
-        honch_flush();
-    }
-}
+honch_config_t config = {
+    .api_key = "your-project-key",
+    .host = "https://i.honch.io",
+    .device_model = "demo-board",
+    .firmware_version = "1.0.0",
+    .event_buffer = buf,
+    .event_buffer_size = sizeof(buf),
+};
+honch_init(&config);
+honch_track("app_started", NULL, 0);
+honch_flush();   // normally you call honch_tick() from a task
 ```
 
-Expected result: init queues lifecycle events, `app_started` is queued, and `honch_flush()` attempts a compact `POST /capture` upload when the device has network connectivity.
+Full guide: [ESP-IDF](/sdks/esp-idf).
 
-### C/POSIX
-
-Build the SDK and examples:
+### C / POSIX
 
 ```bash
-cd ports/posix
-cmake -S . -B build -DHONCH_BUILD_EXAMPLES=ON
-cmake --build build
+cmake -S . -B build -DHONCH_BUILD_EXAMPLES=ON && cmake --build build
 ```
-
-Use a writable queue directory:
 
 ```c
 #include "honch/honch.h"
 
-int main(void)
-{
-    honch_config_t config = {
-        .api_key = "project-key",
-        .endpoint_url = "https://i.honch.io",
-        .device_model = "linux-gateway",
-        .firmware_version = "1.0.0",
-        .queue_directory = ".honch-queue",
-        .durability_mode = HONCH_DURABILITY_SYNC_ALWAYS,
-    };
-
-    honch_client_t *client = NULL;
-    if (honch_init(&client, &config) == HONCH_OK) {
-        honch_track(client, "app_started", "{\"source\":\"posix\"}");
-        honch_flush(client);
-        honch_shutdown(client);
-    }
-}
+honch_config_t config = {
+    .api_key = "your-project-key",
+    .endpoint_url = "https://i.honch.io",
+    .device_model = "linux-gateway",
+    .firmware_version = "1.0.0",
+    .queue_directory = "/var/lib/honch",
+};
+honch_client_t *client = NULL;
+honch_init(&client, &config);
+honch_track(client, "app_started", NULL, 0);
+honch_flush(client);
 ```
 
-Expected result: `.honch-queue/state/` contains identity state, retryable failures stay in `.honch-queue/pending/`, and accepted events are consumed.
+Full guide: [C / POSIX](/sdks/c-posix).
 
 ### MicroPython
 
-Build firmware with the C user module. Installing Python files alone is not enough.
-
-```bash
-make -C ports/unix \
-  USER_C_MODULES=/path/to/SDK/ports/micropython/usermod/honch/micropython.cmake
-```
-
-Then use the Python wrapper:
+Build firmware with the `_honch_core` user C module (see the [guide](/sdks/micropython)), then:
 
 ```python
 import honch
-
 client = honch.Honch(
-    api_key="project-key",
+    api_key="your-project-key",
     endpoint_url="https://i.honch.io",
-    device_model="pico-w",
+    device_id="dev-board-001",
+    device_model="dev-board",
     firmware_version="1.0.0",
-    queue_directory="/honch",
+    event_buffer=bytearray(8192),
 )
-
-client.track("app_started", {"source": "micropython"})
+client.track("app_started")
 client.flush()
-client.shutdown()
 ```
 
-Expected result: files are created below `/honch/pending`, `/honch/dead`, and `/honch/state` as needed. Background flushing is disabled by the current user module, so call `flush()` explicitly.
+Full guide: [MicroPython](/sdks/micropython).
 
-### Arduino ESP32
+### Arduino (ESP32)
 
-Use this for ESP32 Arduino sketches that call `flush()` explicitly:
+```ini
+lib_deps = honch/Honch@^0.2.4
+```
 
 ```cpp
-#include <WiFi.h>
 #include <Honch.h>
+static uint8_t buf[8192];
 
-static uint8_t eventBuffer[8192];
+HonchConfig config = {};
+config.apiKey = "your-project-key";
+config.host = "https://i.honch.io";
+config.deviceModel = "demo-board";
+config.firmwareVersion = "1.0.0";
+config.rootCaPem = ROOT_CA_PEM;
+config.eventBuffer = buf;
+config.eventBufferSize = sizeof(buf);
 
-void setup() {
-  WiFi.begin("ssid", "password");
-  while (WiFi.status() != WL_CONNECTED) delay(250);
-
-  HonchConfig config = {};
-  config.apiKey = "project-key";
-  config.host = "https://i.honch.io";
-  config.deviceModel = "esp32-devkit";
-  config.firmwareVersion = "1.0.0";
-  config.environment = "production";
-  config.eventBuffer = eventBuffer;
-  config.eventBufferSize = sizeof(eventBuffer);
-  config.flushIntervalSeconds = 60;
-  config.flushEventThreshold = 30;
-
-  if (Honch.begin(config)) {
-    Honch.track("app_started", "{\"source\":\"arduino\"}");
-    Honch.flush();
-  }
-}
-
-void loop() {}
+honch::defaultClient().begin(config);
+honch::defaultClient().track("app_started");
 ```
 
-Expected result: `Honch.begin()` returns `true`, the device ID is derived from the ESP32 eFuse MAC, and queue state is stored through ESP32 `Preferences`.
+Full guide: [Arduino (ESP32)](/sdks/arduino).
 
-### React Native Relay
+### No SDK?
 
-Use relay only when the device cannot upload directly. The firmware sends relay frames over BLE; the mobile app stores completed messages, ACKs durable receipt, and uploads to Capture.
+Send JSON straight to the API:
 
-```ts
-import { NativeEventEmitter, NativeModules } from "react-native";
-import { createMMKV } from "react-native-mmkv";
-import {
-  createMobileRelay,
-  createMmkvRelayStore,
-  createRelayNativeBindings,
-} from "@honch/react-native-relay";
-
-const nativeModule = NativeModules.HonchReactNativeRelay;
-const bindings = createRelayNativeBindings(nativeModule);
-
-const relay = createMobileRelay({
-  durableStore: createMmkvRelayStore(createMMKV({ id: "honch-relay" })),
-  uploaderConfig: {
-    endpointUrl: "https://i.honch.io",
-    projectKey: "project-key",
-    relayId: "mobile-relay-1",
-    relaySdkPlatform: "react-native",
-    relaySdkVersion: "0.1.0",
-    streamId: (message) => `relay-${message.deviceId}`,
-    messageId: (message) => Number(message.sequence),
-  },
-  bleNative: bindings.bleNative,
-  schedulerNative: bindings.schedulerNative,
-  frameEvents: new NativeEventEmitter(nativeModule),
-});
-
-relay.subscribeNativeFrames();
+```bash
+curl -X POST https://i.honch.io/capture \
+  -H "Content-Type: application/json" \
+  -H "X-Honch-Project-Key: your-project-key" \
+  -d '{
+    "context": {
+      "distinct_id": "device-1",
+      "$device_id": "device-1",
+      "$device_model": "demo-board",
+      "$firmware_version": "1.0.0",
+      "$sdk_platform": "custom",
+      "$sdk_version": "1.0.0"
+    },
+    "events": [{ "event": "app_started" }]
+  }'
 ```
 
-Expected result: valid relay frames are assembled into durable mobile queue entries. The firmware should only receive an ACK after the completed compact message is durably stored.
+Full guide: [Build Your Own Integration](/byo-integration) and the [HTTP JSON API](/http-api).
 
-## 4. Verify The First Event
+## 3. Verify The First Event
 
-Check these in order:
-
-1. The SDK init call succeeds.
-2. Your event call returns success or does not raise.
-3. Local queue state is created.
-4. The configured endpoint is correct and the SDK appends `/capture`.
-5. Capture returns `202`, `204`, or another success accepted by that port.
-
-If the first event does not appear, do not add more tracking yet. Fix delivery first, then add identity, sessions, and product events.
-
-## 5. Add The First Useful Product Events
-
-After the first event is verified, add only the events you would debug from:
-
-| Event | When to send |
+| Check | What you should see |
 | --- | --- |
-| `app_started` | After SDK init and app startup. |
-| `button_pressed` | From a task or GPIO helper, not raw ISR context. |
-| `mode_changed` | When the device changes user-visible operating state. |
-| `sync_started` / `sync_finished` | Around network or relay sync flows. |
-| `error_seen` | When firmware sees an actionable recoverable error. |
+| Init succeeds | The SDK returns success and queues `$device_boot`. |
+| Flush attempts upload | A `POST /capture` goes out once connected. |
+| Capture accepts | `204` (batch accepted) or `202` (chunk stored). JSON returns `200` with `accepted`. |
+| Event appears | `app_started` shows up in your project's live events. |
 
-Keep property payloads small and stable. Prefer names like `mode`, `reason`, `source`, `duration_ms`, and `count` over ad hoc nested blobs.
+If events queue but never upload, work through [Troubleshooting](/troubleshooting).
 
-## Next Step
+## 4. Add A Few Product Events
 
-Read the SDK-specific guide for your target. Each one shows the install path, configuration fields, expected runtime signs, and the first troubleshooting checks.
+Once one event is verified, instrument the moments that matter. Good first events:
+
+| Event | When |
+| --- | --- |
+| `app_started` | Firmware finished boot and is ready. |
+| `mode_changed` | The device switched modes (property `mode`). |
+| `sync_started` / `sync_finished` | A sync began/ended (property `duration_ms`). |
+| `button_pressed` | A physical input fired (property `pin` or `button`). |
+
+Keep names stable and put the variable detail in properties. Then read [Shared Concepts](/concepts) to understand identity, sessions, and how queueing and retries behave.
