@@ -1,0 +1,47 @@
+---
+title: Production Checklist
+description: What to verify before shipping a Honch integration.
+---
+
+Run through this before you ship. It assumes you already have one verified event from the [Quickstart](/quickstart).
+
+## Identity
+
+- [ ] Decide whether you set a fixed `device_id` or let the SDK generate and persist one. If you rely on a generated ID, confirm it persists across restarts (you have wired durable state storage on the device ports).
+- [ ] Call `identify()` at the right moment if your product has accounts. Confirm earlier anonymous events merge to the person in Honch.
+- [ ] Confirm `reset()` is called at your factory-reset / logout boundary (it clears identity, session, and queue, and emits no event).
+
+## Transport And Security
+
+- [ ] Endpoint is `https://i.honch.io` (or your assigned host) over HTTPS. No production path disables TLS verification.
+- [ ] The project API key is supplied via configuration, kept out of source control and logs, and scoped to capture.
+- [ ] A `401` is understood as permanent (bad key), not a transient error.
+
+## Queue And Durability
+
+- [ ] Event buffer / queue is sized for your worst-case offline window. Remember the queue is drop-oldest past `max_queued_events` (default 1000).
+- [ ] You have chosen volatile RAM vs durable storage deliberately. If losing buffered events on power loss is unacceptable, wire durable queue/state adapters and consider `SYNC_ALWAYS`.
+- [ ] Largest event stays under `max_event_bytes` (default 8192) — oversized events are rejected.
+
+## Flushing
+
+- [ ] You pump `tick()` from a dedicated task/thread, never from an ISR or latency-sensitive path. On the device ports, that task has at least 8192 bytes of stack for the TLS handshake.
+- [ ] Flush cadence (`flush_interval_seconds`, `flush_event_threshold`, `flush_min_interval_ms`) suits your event volume and power budget.
+- [ ] You supply a `connectivity_callback` (or equivalent) so the SDK skips DNS/TLS while the radio is down.
+
+## Time
+
+- [ ] The device clock is synced (NTP/SNTP) before you depend on absolute timestamps. The SDK records boot-relative time before the clock is set and normalizes it at flush, but a synced clock is cleaner.
+
+## Lifecycle And Errors
+
+- [ ] You expect the automatic traffic: init alone queues `$device_boot`, and `$firmware_update` fires when the stored firmware version changes.
+- [ ] If you want crash/error capture, error tracking is enabled (and on ESP-IDF, the coredump options are set for symbolication; note backtraces are Xtensa-only).
+
+## Verify On Real Hardware
+
+- [ ] You have watched a real device boot, queue, and upload — `204` (accepted) or `202` (chunk stored) — and seen events land in Honch.
+- [ ] You have tested the offline → reconnect path: events stay pending while offline and flush on reconnect with backoff.
+- [ ] You have power-cycled mid-queue and confirmed the durability behavior you expect.
+
+When all of the above hold, you are ready to ship. Keep an eye on [Troubleshooting](/troubleshooting) for the failure modes you will inevitably field.

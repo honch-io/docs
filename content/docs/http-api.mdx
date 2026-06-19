@@ -65,7 +65,7 @@ The same URL also accepts the binary wire format under `Content-Type: applicatio
 | `$environment` | Optional | string (non-empty) | Defaults to `production` when omitted. |
 | `$session_id` | Optional | string (non-empty) | Present only when a session is active. |
 
-Any context key not in this table is rejected with `422` and code `unknown_context_key`. Put additional dimensions in per-event `properties` instead of inventing context keys.
+Any context key not in this table is rejected with `422` and code `unknown_context_key`. Put additional dimensions in per-event `properties` instead of inventing context keys. The request body itself accepts only `context` and `events` — an unexpected top-level field fails the whole request with `400` `invalid_json`.
 
 ### Event Fields
 
@@ -338,7 +338,7 @@ You can lock your client against the shared conformance fixtures, which define t
 | Properties per event | 64 |
 | Nested value depth | 8 |
 
-Events-per-request is enforced (`422 too_many_events` above it). The properties-per-event and nesting limits mirror the canonical event model shared with the wire format; stay within them so your events expand identically on both paths.
+Events-per-request (`422 too_many_events`) and nesting depth are enforced. The 64-properties-per-event figure is the canonical event model's shape, shared with the binary wire format — stay within it so your events expand identically on both paths, even though the JSON endpoint does not separately reject a request for exceeding it.
 
 ## Next Steps
 

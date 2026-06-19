@@ -1,0 +1,41 @@
+---
+title: Swift Relay
+description: iOS companion-app relay for forwarding BLE frames from offline devices to Honch.
+---
+
+The Swift relay is the iOS counterpart to the [React Native relay](/sdks/react-native-relay): a relay/uploader, not a device analytics SDK. It receives Honch relay frames over BLE, durably reassembles complete compact messages, acknowledges receipt to the device, and uploads to Honch.
+
+<Callout type="warn" title="Coming soon">The Swift relay's source is implemented, but a supported Swift Package Manager distribution is not published yet, so there is no install line to copy. If you need the iOS relay today, [contact us](mailto:support@honch.io). This page documents the surface so you can plan ahead.</Callout>
+
+## The Host-Owned Bluetooth Model
+
+As with the React Native relay, your app owns CoreBluetooth — scanning, connection, notification subscription, and ACK characteristic writes. The package validates, reassembles, durably stores, acknowledges, and uploads. It does not touch the BLE stack. The BLE service and characteristic UUIDs and the frame format are defined in the relay-chunks spec.
+
+An ACK is 9 bytes: a version byte (`0x01`) followed by a big-endian uint64 sequence number.
+
+## Planned Surface
+
+The module is `HonchSwiftRelay`. The entry point is an actor:
+
+```swift
+public actor HonchRelay {
+    init(store:config:uploader:scheduler:nowMs:random:)
+
+    func receiveFrame(deviceId:frameBytes:acknowledge:) async throws -> RelayFrameReceipt
+    func pending() async throws -> [StoredRelayMessage]
+    func startUploadScheduler()
+    func stopUploadScheduler()
+    func drainUploads() async
+}
+```
+
+`HonchRelayConfig` defaults `endpointURL` to `https://i.honch.io` and `relaySdkPlatform` to `ios`. Supporting types include `RelayUploading` / `URLSessionRelayUploader`, `RelayDurableStore` / `FileRelayStore` / `MemoryRelayStore`, and `RelayScheduling`.
+
+## What's Left For General Availability
+
+The package lives in a subdirectory of the SDK monorepo and has no plain-semver git tag, so SwiftPM cannot resolve it from a `.package(url:)` declaration yet. Shipping it means publishing it where `Package.swift` is at a repo root with a semver tag (a mirror repo or subtree split). Until then, treat this page as a preview of the API, not an integration guide.
+
+## Use Today
+
+- iOS apps that need the relay now: [reach out](mailto:support@honch.io).
+- Building a relay on another platform: see the [React Native relay](/sdks/react-native-relay) for the working reference, or the [relay flow](/concepts#relay-flow) for the model.

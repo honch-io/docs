@@ -1,11 +1,11 @@
 {
   "title": "SDKs",
   "pages": [
-    "shared-core",
     "esp-idf",
     "c-posix",
     "micropython",
     "arduino",
-    "react-native-relay"
+    "react-native-relay",
+    "swift-relay"
   ]
 }

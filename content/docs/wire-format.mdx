@@ -26,7 +26,7 @@ X-Honch-Project-Key: <project_api_key>
 X-Honch-Stream-Id: <stream_id>        # required for multi-chunk HTTP uploads
 ```
 
-This is the same URL the JSON path uses (aliases `/e` and `/chunks` also accept it). Capture branches on the `Content-Type`. The project key is a transport credential and is not encoded inside the device message body. `Content-Encoding` is not allowed.
+This is the same URL the JSON path uses (aliases `/e` and `/chunks` also accept it). Capture branches on the `Content-Type`. The project key is a transport credential and is not encoded inside the device message body. `Content-Encoding` is not allowed on this binary path. `X-Honch-Stream-Id` must be present and at most 128 bytes for any multi-frame upload; a missing or oversized stream id is rejected with `400`.
 
 ## Chunk Frame And Compact Message
 
