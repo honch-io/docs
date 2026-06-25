@@ -84,7 +84,7 @@ Honch reports both **fatal crashes** (a `$crash` event) and **non-fatal errors**
 | Platform | Fatal crash (`$crash`) | Crash detail captured | Non-fatal error (`$error`) |
 | --- | --- | --- | --- |
 | **ESP-IDF (ESP32)** | Automatic — abnormal reset detected at next boot (`enable_error_tracking`) | **Full coredump → symbolicated backtrace** (`enable_crash_symbolication`) | **Automatic** — `ESP_LOGE` lines become `$error` |
-| **MicroPython** | Automatic for uncaught Python exceptions (`install_error_hook()`) | **Python traceback** (file/line/function) | Explicit — `report_log_error()` |
+| **MicroPython** | Uncaught Python exceptions — wrap your entry point with `client.run(main)`, or `install_error_hook()` where available | **Python traceback** (file/line/function) | Explicit — `report_log_error()` |
 | **C / POSIX** | Automatic via signal handlers (`honch_install_error_handlers()`) | Reset/signal context (no coredump) | Explicit — `honch_core_report_log_error()` |
 | **Arduino (ESP32)** | Automatic — abnormal reset detected at next boot (`enableErrorTracking`) | Reset reason (no coredump) | Explicit — core API |
 
@@ -93,7 +93,7 @@ Honch reports both **fatal crashes** (a `$crash` event) and **non-fatal errors**
 - **Full coredumps are ESP-IDF only.** ESP32 captures the device's memory + registers at the moment of the crash, and the backend resolves it to a function/file/line **backtrace**. POSIX, MicroPython, and Arduino do **not** capture a coredump.
 - **The readable backtrace differs by platform.** ESP-IDF gets a symbolicated coredump backtrace; MicroPython gets the Python traceback; POSIX and Arduino get the `$crash` *event* (that it happened, plus reset/signal context) but no deep backtrace.
 - **Automatic error-log capture is ESP-IDF only.** On the other ports an `$error` is emitted only when your code calls the explicit error-report API (for example, wired into your logging) — nothing is captured automatically.
-- **MicroPython automatic crash capture requires `sys.excepthook`** in your firmware build. `install_error_hook()` returns `False` when it is unavailable; on such builds you must report crashes explicitly.
+- **MicroPython** captures crashes by wrapping your entry point with `client.run(main)` (works on every build) or via `install_error_hook()` (which needs `sys.excepthook` — stock firmware like the Pico W omits it, and the hook then returns `False`). Prefer `run()` unless your firmware enables the hook.
 - **Delivery timing differs by platform.** A `$crash` is queued, not sent synchronously. ESP-IDF and Arduino re-derive it from the hardware reset reason on the **next boot** (and the ESP-IDF coredump lives on a flash partition), so it survives the reset; POSIX persists the crash to its queue directory. **MicroPython reports in-process**, so a fatal crash is delivered only if a flush completes before the board resets — or you supply a durable queue. The default RAM queue does not survive a reset.
 
 </Callout>

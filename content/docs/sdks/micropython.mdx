@@ -79,19 +79,33 @@ Connectivity is explicit. `client.connectivity_changed(connected)` (and the `con
 ```python
 # Report a non-fatal error you handled — e.g. wire this into your logging:
 client.report_log_error("sensor read failed", component="imu")
+```
 
-# Capture UNCAUGHT exceptions as a $crash automatically (idempotent):
-installed = client.install_error_hook()
+For **uncaught crashes**, pick one of the two options below. Both report the crash as a `$crash` carrying the exception type, message, and the **Python traceback** (file/line/function, crash-site first). On MicroPython the traceback *is* the symbolicated backtrace — there is no coredump.
+
+**Option A — wrap your entry point (works on every build).** Run your `main` through Honch; any uncaught exception is reported, flushed, and re-raised so behavior is unchanged:
+
+```python
+def main():
+    while True:
+        client.tick()
+        read_sensors()
+
+client.run(main)   # instead of calling main() directly
+```
+
+**Option B — install a global hook (needs `sys.excepthook`).** If your firmware is built with `MICROPY_PY_SYS_EXCEPTHOOK` enabled, you can hook the interpreter instead of wrapping `main`:
+
+```python
+client.install_error_hook()   # idempotent; returns False if sys.excepthook is unavailable
 # ... later, to restore the previous hook ...
 client.uninstall_error_hook()
 ```
 
-`install_error_hook()` wraps `sys.excepthook`, so an uncaught exception is reported as a `$crash` carrying the exception type, message, and the **Python traceback** (file/line/function, crash-site first). On MicroPython the traceback *is* the symbolicated backtrace — there is no coredump.
+<Callout type="warn" title="Which one to use">
 
-<Callout type="warn" title="MicroPython crash-capture caveats">
-
-- `install_error_hook()` needs `sys.excepthook` in your firmware build. It returns `False` when that is unavailable — on those builds, report crashes explicitly with `report_log_error()` rather than relying on the hook.
-- The `$crash` is reported **in-process**, so a fatal crash is delivered only if a `flush()` completes before the board resets, or you supply a durable queue.
+- **Stock MicroPython firmware (including the Pico W) ships without `sys.excepthook`**, so `install_error_hook()` returns `False` and captures nothing. On those builds use `client.run(main)` — it relies only on a plain `try/except` and needs no firmware changes. Build a custom firmware with `MICROPY_PY_SYS_EXCEPTHOOK` only if you genuinely cannot wrap your entry point.
+- Either way the `$crash` is reported **in-process**: a fatal crash is delivered only if the flush completes before the board resets (or you supply a durable queue). `client.run()` flushes for you before re-raising.
 - There is no coredump on MicroPython (that is ESP-IDF only); the Python traceback is the equivalent readable backtrace.
 
 </Callout>
@@ -112,7 +126,8 @@ Wrapper exceptions subclass `HonchError`: `InvalidArgumentError`, `StorageError`
 | `set_property(key, value=None)` | Emit `$set_property`. |
 | `session_start(name=None)` / `session_end()` | Bracket a session. |
 | `report_log_error(message, *, component=None)` | Report a handled, non-fatal error as an `$error`. |
-| `install_error_hook()` / `uninstall_error_hook()` | Capture uncaught exceptions as `$crash` with the Python traceback (wraps `sys.excepthook`; returns `False` if unavailable). |
+| `run(fn, *args, **kwargs)` | Run your entry point with crash capture: an uncaught exception becomes a `$crash` (with traceback), is flushed, and re-raised. Works on every build (no `sys.excepthook` needed). |
+| `install_error_hook()` / `uninstall_error_hook()` | Alternative to `run()`: capture uncaught exceptions globally via `sys.excepthook` (returns `False` if the firmware lacks it). |
 | `connectivity_changed(connected)` / `connected()` / `disconnected()` | Report connectivity; emits `$connectivity_change`. |
 | `tick()` | Cooperative delivery step. |
 | `flush()` | Send queued batches now (raises `OfflineError` when offline). |
