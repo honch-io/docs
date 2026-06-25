@@ -74,19 +74,27 @@ while True:
 
 Connectivity is explicit. `client.connectivity_changed(connected)` (and the `connected()` / `disconnected()` shorthands) records the state and emits a `$connectivity_change` event with a `state` property of `"connected"` or `"disconnected"`. When the wrapper believes it is offline, `flush()` raises `OfflineError` and `tick()` is a no-op, so it never spends time on DNS/TLS.
 
-## 5. Handle Errors
+## 5. Crash And Error Reporting
 
 ```python
-client.report_error("sensor read failed", severity="error", component="imu")
+# Report a non-fatal error you handled — e.g. wire this into your logging:
+client.report_log_error("sensor read failed", component="imu")
 
-# Or wrap a call so exceptions are reported as fatal and re-raised:
-client.run_with_error_tracking(read_sensors)
-
-# Or hook the interpreter's excepthook (idempotent):
-client.install_error_hook()
-# ... later ...
+# Capture UNCAUGHT exceptions as a $crash automatically (idempotent):
+installed = client.install_error_hook()
+# ... later, to restore the previous hook ...
 client.uninstall_error_hook()
 ```
+
+`install_error_hook()` wraps `sys.excepthook`, so an uncaught exception is reported as a `$crash` carrying the exception type, message, and the **Python traceback** (file/line/function, crash-site first). On MicroPython the traceback *is* the symbolicated backtrace — there is no coredump.
+
+<Callout type="warn" title="MicroPython crash-capture caveats">
+
+- `install_error_hook()` needs `sys.excepthook` in your firmware build. It returns `False` when that is unavailable — on those builds, report crashes explicitly with `report_log_error()` rather than relying on the hook.
+- The `$crash` is reported **in-process**, so a fatal crash is delivered only if a `flush()` completes before the board resets, or you supply a durable queue.
+- There is no coredump on MicroPython (that is ESP-IDF only); the Python traceback is the equivalent readable backtrace.
+
+</Callout>
 
 Wrapper exceptions subclass `HonchError`: `InvalidArgumentError`, `StorageError`, `RejectedError`, `NotInitializedError`, `CompressionUnavailableError`, and `TransportError` — with `OfflineError`, `RateLimitedError`, and `ServerError` subclassing `TransportError`.
 
@@ -103,9 +111,8 @@ Wrapper exceptions subclass `HonchError`: `InvalidArgumentError`, `StorageError`
 | `identify(distinct_id, traits=None)` | Set identity; emits `$identify`. |
 | `set_property(key, value=None)` | Emit `$set_property`. |
 | `session_start(name=None)` / `session_end()` | Bracket a session. |
-| `report_error(message, *, severity, error_type, component, code, backtrace, properties)` | Queue an `$error`. |
-| `run_with_error_tracking(fn, *args, **kwargs)` | Run `fn`, report exceptions as fatal, re-raise. |
-| `install_error_hook()` / `uninstall_error_hook()` | Wrap/unwrap `sys.excepthook`. |
+| `report_log_error(message, *, component=None)` | Report a handled, non-fatal error as an `$error`. |
+| `install_error_hook()` / `uninstall_error_hook()` | Capture uncaught exceptions as `$crash` with the Python traceback (wraps `sys.excepthook`; returns `False` if unavailable). |
 | `connectivity_changed(connected)` / `connected()` / `disconnected()` | Report connectivity; emits `$connectivity_change`. |
 | `tick()` | Cooperative delivery step. |
 | `flush()` | Send queued batches now (raises `OfflineError` when offline). |

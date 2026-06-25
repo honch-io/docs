@@ -36,7 +36,7 @@ Run through this before you ship. It assumes you already have one verified event
 ## Lifecycle And Errors
 
 - [ ] You expect the automatic traffic: init alone queues `$device_boot`, and `$firmware_update` fires when the stored firmware version changes.
-- [ ] If you want crash/error capture, error tracking is enabled (and on ESP-IDF, the coredump options are set for symbolication; note backtraces are Xtensa-only).
+- [ ] If you want crash/error capture, error tracking is enabled at runtime (`enable_error_tracking`). For ESP-IDF coredump backtraces, also set `enable_crash_symbolication` and ESP-IDF's coredump-to-flash options. Full coredumps and symbolicated backtraces are **ESP-IDF only** (Xtensa targets); MicroPython captures the Python traceback, and the other ports report a `$crash` event without a coredump. See [Crash And Error Reporting](/concepts#crash-and-error-reporting).
 
 ## Verify On Real Hardware
 

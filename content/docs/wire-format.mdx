@@ -37,6 +37,8 @@ The format has two layers:
 
 A direct upload that fits in one request sends a single final frame. Constrained links split the same compact message into an init frame plus continuation frames, which Capture reassembles by stream id and message id before decoding. Once decoded, a compact message expands into the identical canonical events the JSON path produces.
 
+The header's **source type** distinguishes what the frame carries: source type `0` is an event batch (the compact message above); source type `1` is a raw **coredump** blob (the ESP-IDF crash pipeline) streamed in the same CRC-checked, resumable chunks. Coredump frames are reassembled by stream id (the crash's `crash_id`) and stored as an opaque blob for backend symbolication rather than decoded into events.
+
 ## Response Codes
 
 | Response | Meaning |

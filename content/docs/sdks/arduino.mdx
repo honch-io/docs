@@ -68,7 +68,7 @@ Methods return `bool` (`true` on success); read `lastError()` for the status str
 | `flushIntervalSeconds`, `flushMinIntervalMs`, `flushEventThreshold` | shared defaults | `flushEventThreshold` also sets the batch size. |
 | `transportTimeoutMs` | 2500 | Capped at 10000. |
 | `connectivityCallback` | — | Return `false` when offline. |
-| `enableErrorTracking` | `false` | Map the ESP32 reset reason to `$error` at `begin()`. |
+| `enableErrorTracking` | `false` | Detect an abnormal ESP32 reset at `begin()` and emit a `$crash` with the reset reason. This port captures the reset reason only — no coredump or symbolicated backtrace (those are ESP-IDF only). |
 | `insecureSkipTlsVerify` | `false` | Local testing only; logs a warning. |
 | `stateStorageOps` / `eventQueueOps` | — | Durable identity / durable queue. |
 
@@ -104,4 +104,4 @@ arduino-cli compile --fqbn esp32:esp32:esp32 examples/HonchBasic
 
 ## Public API
 
-`honch::defaultClient()` returns the singleton. Methods: `begin(config)`, `track(name, props, count)`, `identify(id, traits, count)`, `setProperty(key, value)`, `sessionStart(name)`, `sessionEnd()`, `reportError(report, props, count)`, `flush()`, `tick()` (alias `loop()`), `reset()`, `shutdown()`, `deviceId()`, `queueStats(&stats)`, and `lastError()`.
+`honch::defaultClient()` returns the singleton. Methods: `begin(config)`, `track(name, props, count)`, `identify(id, traits, count)`, `setProperty(key, value)`, `sessionStart(name)`, `sessionEnd()`, `flush()`, `tick()` (alias `loop()`), `reset()`, `shutdown()`, `deviceId()`, `queueStats(&stats)`, and `lastError()`.
