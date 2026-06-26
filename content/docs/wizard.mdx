@@ -1,0 +1,132 @@
+---
+title: Setup Wizard
+description: The agent-powered installer that wires a Honch SDK into your project — and how its feature footprint numbers are measured.
+---
+
+The setup wizard is the fastest way to add Honch to a project. It scans your
+codebase, connects your Honch account, lets you choose which optional SDK
+features to compile in, and then runs an agent that does the integration —
+finishing with a setup report you can review.
+
+```bash
+# npm
+npx @honch/start
+
+# bun
+bunx @honch/start
+```
+
+It installs into the current directory by default; point it elsewhere with
+`--install-dir /path/to/project`. Prefer to watch without changing anything?
+`--dry-run` walks the whole flow and writes the report without running the agent
+or touching your files.
+
+## How it works
+
+<Steps>
+
+<Step>
+### Scan
+
+The wizard inspects the project and detects the most likely SDK target —
+ESP-IDF, C/POSIX, MicroPython, Arduino, or a React Native relay — and pre-selects it.
+</Step>
+
+<Step>
+### Connect
+
+Sign in to your Honch account (browser login) and pick or create a project. The
+wizard mints a short-lived token for the install and never writes your raw
+project API key into source.
+</Step>
+
+<Step>
+### Pick your features
+
+Choose which optional SDK features to compile in. Everything is on by default,
+so confirming unchanged installs the full SDK. See [below](#pick-your-features-1)
+for what each feature costs.
+</Step>
+
+<Step>
+### Confirm
+
+Review the plan. On a git repo the wizard offers to do the work on a fresh
+branch, so you can review or discard the whole integration cleanly.
+</Step>
+
+<Step>
+### Install & report
+
+An agent applies the integration using your project's own conventions, runs the
+available build/test checks, and writes `honch-setup-report.md` describing
+exactly what changed.
+</Step>
+
+</Steps>
+
+## Pick your features
+
+The Honch SDK is built from a small always-on core plus optional features gated
+at compile time. Turning a feature off in the wizard sets its compile-time
+toggle, so the code is genuinely excluded from the build — not just disabled at
+runtime. The picker shows the estimated cost of each feature so you can weigh
+the tradeoff on a constrained device.
+
+| Feature | What it adds | Toggle |
+| --- | --- | --- |
+| **Core** *(required)* | Event tracking, typed properties, identity, the compact wire format, and the local queue. | — |
+| **Error tracking** | `$crash` events + ESP32 coredump upload, and `$error` capture coalesced from your logs. | `HONCH_ENABLE_ERROR_TRACKING` |
+| **Lifecycle events** | `$device_boot`, `$firmware_update`, `$device_shutdown`. | `HONCH_ENABLE_LIFECYCLE_EVENTS` |
+| **Sessions** | `$session_start` / `$session_end`. | `HONCH_ENABLE_SESSIONS` |
+| **Battery telemetry** | `$battery_low`, plus a `$battery_level` property on events. | `HONCH_ENABLE_BATTERY` |
+
+<Callout title="ESP-IDF bundles crashes and logs">
+On ESP-IDF, crash reporting and log capture share one Kconfig switch
+(`CONFIG_HONCH_ERROR_TRACKING`), so the wizard presents them as a single
+**Error tracking** feature. On C/POSIX and MicroPython the core also exposes the
+finer `HONCH_ENABLE_CRASH_CAPTURE` / `HONCH_ENABLE_LOG_CAPTURE` macros if you
+want to strip them independently by hand.
+</Callout>
+
+## How the footprint numbers are measured
+
+The numbers in the picker are measured, not estimated — and regenerated from the
+SDK so they stay honest. They reflect a release build on **ESP32 with ESP-IDF
+v6.0.1, optimized for size (`-Os`)**, and are shown for every C-core target as a
+representative figure.
+
+| Feature | Flash | Static RAM | Per-event wire |
+| --- | ---: | ---: | --- |
+| Error tracking | 4.9 KB | 316 B | ~166 B (`$crash`) |
+| Lifecycle events | 793 B | — | ~29 B (`$device_boot`) |
+| Sessions | 833 B | — | ~32 B (`$session_start`) |
+| Battery telemetry | 452 B | — | ~26 B (`$battery_low`) |
+
+Turning every option off leaves the ~37 KB always-on core; the full SDK is
+~44 KB of flash. So feature stripping saves up to ~7 KB — real, but small next
+to the core. Each number is derived as follows:
+
+- **Flash** and **static RAM** are the *marginal* cost of each feature: the SDK
+  is built with all features on, then once more with that single feature off,
+  and the difference in the linked `libhonch.a` archive is attributed to the
+  feature. Flash counts the `.text`/`.rodata` sections; static RAM counts
+  `.bss`/`.data`.
+- **Per-event wire** is the full encoded size of the feature's headline event in
+  the [compact wire format](/wire-format) — event name, timestamp, and all its
+  properties. It's an upper bound: when many events upload together, shared
+  strings are deduplicated and the real per-event cost drops.
+
+<Callout type="warn" title="What these numbers are not">
+**Static RAM is not total RAM.** It counts only the SDK's static `.bss`/`.data`.
+The dominant runtime cost is your event queue, which is sized by *your* config
+(`max_queued_events`, `max_event_bytes`), not by these feature toggles.
+
+**Per-event wire is per event, not per second.** Total network egress depends on
+how often each event fires — boots, sessions, and battery alerts are
+infrequent; logs and crashes depend on your device's behavior.
+</Callout>
+
+The measurement tools live in the SDK repo (`tools/measure_feature_footprint.py`
+for flash/RAM, `tools/measure_feature_wire.c` for wire bytes); rerun them to
+refresh the figures after a core change.
