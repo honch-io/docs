@@ -11,7 +11,7 @@ Device SDKs verify the server certificate and do not expose a production path th
 
 | Port | TLS behavior |
 | --- | --- |
-| ESP-IDF | Uses the ESP-IDF certificate bundle for server verification. There is no option to turn verification off. |
+| ESP-IDF | Verifies the server certificate. For the default `i.honch.io` endpoint it trusts the Google Trust Services roots directly (certificate pinning to Honch's backend); for custom endpoints it uses the ESP-IDF certificate bundle, so your endpoint's chain must terminate at a root the bundle includes. There is no option to turn verification off. |
 | C / POSIX | libcurl with peer and host verification enabled; only `http`/`https` schemes, no redirect following. |
 | Arduino | `WiFiClientSecure` with your `rootCaPem`. `insecureSkipTlsVerify` exists for local testing only and logs a warning. |
 

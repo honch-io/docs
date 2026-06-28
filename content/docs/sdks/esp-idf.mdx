@@ -64,11 +64,12 @@ Required fields are `api_key`, `host`, `device_model`, `firmware_version`, and a
 | `flush_interval_seconds` | 120 | Periodic flush cadence. |
 | `flush_event_threshold` | 20 | Queue depth that requests a flush. |
 | `flush_min_interval_ms` | 15000 | Minimum spacing between upload attempts. |
-| `transport_timeout_ms` | 2500 | Clamped to 1000–10000 ms. |
+| `transport_timeout_ms` | 8000 | Clamped to 1000–10000 ms. A constrained ESP32 TLS handshake plus the POST needs headroom above the old 2.5 s. |
 | `flush_max_batches` | 1 | Batches sent per flush. |
 | `battery_callback` / `battery_low_threshold` | — / 15 | Return 0–100 to enable `$battery_level` and `$battery_low`. |
 | `connectivity_callback` | — | Return 0 when offline so the SDK skips DNS/TLS. Defaults to always-connected. |
-| `enable_error_tracking` | `false` | Emit `$error` after an abnormal reset. See [Error Tracking](#error-tracking). |
+| `enable_error_tracking` | `false` | Master switch for crash + error reporting: emit a `$crash` after an abnormal reset and capture `ESP_LOGE` lines as `$error`. See [Crash And Error Tracking](#crash-and-error-tracking). |
+| `enable_crash_symbolication` | `false` | When a crash is reported, also capture the full coredump for backend symbolication (a function/file/line backtrace) and stamp the firmware build ID. Requires `enable_error_tracking`. |
 | `state_storage_ops` / `event_queue_ops` | — | Supply durable identity / a durable queue. |
 
 If you do not set a `device_id`, the SDK derives a stable one from the Wi-Fi station MAC, formatted `esp32-<MAC>`.
@@ -143,14 +144,20 @@ Two build-time options gate the error-tracking code, both enabled by default in 
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `CONFIG_HONCH_ERROR_TRACKING` | on | Compiles in the boot fault-snapshot / `$error` path. |
-| `CONFIG_HONCH_CRASH_SYMBOLICATION` | on | Adds firmware build IDs and raw crash addresses from ELF coredump summaries. Depends on error tracking. |
+| `CONFIG_HONCH_ERROR_TRACKING` | on | Compiles in the crash (`$crash`) + error-log (`$error`) capture path. |
+| `CONFIG_HONCH_CRASH_SYMBOLICATION` | on | Compiles in coredump capture: stamps the firmware build ID and streams the raw ELF coredump for backend symbolication. Depends on error tracking. |
 
-These control whether the code is *compiled in*. To actually emit a `$error` after an abnormal reset you must also set `enable_error_tracking = true` in your runtime config.
+These control whether the code is *compiled in*. To actually report at runtime you must also set `enable_error_tracking = true` (and `enable_crash_symbolication = true` for coredumps) in your config. The runtime switch gates **both** the `$crash` snapshot and the `ESP_LOGE` → `$error` capture, so turning it off silences both.
 
-## Error Tracking
+## Crash And Error Tracking
 
-When `enable_error_tracking` is on, the SDK reads the reset reason during init and, for abnormal resets (panic, watchdog, brownout, and similar), queues a `$error` with the reset cause. With crash symbolication enabled and the coredump-to-flash options configured, a panic also carries a firmware build ID and fault address. Backtrace symbolication is available on Xtensa targets (the original ESP32 and S-series); RISC-V targets (C3/C6/H2) do not emit a backtrace field.
+With `enable_error_tracking` on, the SDK does the following automatically — there are no manual reporting calls:
+
+- **Crash detection.** During init it reads the reset reason and, for an abnormal reset (panic, watchdog, brownout, and similar), queues a `$crash` carrying the reset cause and a `crash_id`. Because it is re-derived from the hardware reset reason on the next boot, the `$crash` does not depend on the queue surviving the reset.
+- **Error-log capture.** It chains `ESP_LOGE` so error-level logs become bounded, de-duplicated `$error` events. The runtime switch gates this too — turning `enable_error_tracking` off stops both the `$crash` snapshot and log capture.
+- **Coredump capture** (with `enable_crash_symbolication`). When ESP-IDF's coredump-to-flash is configured (`CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`, with a `coredump` partition), a panic writes a full coredump to flash. On the next boot the SDK streams it to Capture in CRC-checked, resumable chunks; the backend symbolicates it against your firmware's debug symbols into a **function/file/line backtrace**, joined to the `$crash` by `crash_id`. The on-flash copy is erased only after the upload is acknowledged.
+
+Symbolicated backtraces are produced for Xtensa targets (the original ESP32 and S-series). RISC-V targets (C3/C6/H2) capture the crash but backtrace resolution is more limited.
 
 ## Transport Contract
 
@@ -194,7 +201,6 @@ Watch the serial log for `$device_boot` queuing at init, then a `POST /capture` 
 | `honch_identify(distinct_id, traits, count)` | Set identity; emits `$identify`. |
 | `honch_set_property(key, value)` | Emit `$set_property`. |
 | `honch_session_start(name)` / `honch_session_end()` | Bracket a session. |
-| `honch_report_error(&report, props, count)` | Queue an `$error`. |
 | `honch_tick()` | Cooperative delivery step (one chunk). |
 | `honch_flush()` | Send queued batches now. |
 | `honch_reset()` | Clear identity, session, and queue. |

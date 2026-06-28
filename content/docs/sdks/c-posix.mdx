@@ -21,7 +21,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The build is warnings-as-errors. To compile out `$error`/fault-snapshot support, configure with `-DHONCH_ENABLE_ERROR_TRACKING=OFF`.
+The build is warnings-as-errors. To compile out crash/error reporting (`$crash` + `$error`), configure with `-DHONCH_ENABLE_ERROR_TRACKING=OFF`.
 
 To install and link from another CMake project:
 
@@ -74,7 +74,7 @@ Required fields are `api_key`, `endpoint_url`, `device_model`, `firmware_version
 | `durability_mode` | `OS_BUFFERED` | `SYNC_ALWAYS` fsyncs every write for power-loss safety at a throughput cost. |
 | `flush_interval_seconds` | 120 | |
 | `flush_event_threshold` | 20 | |
-| `transport_timeout_ms` | 2500 | |
+| `transport_timeout_ms` | 8000 | |
 | `connectivity_callback` | — | Return offline so ticks skip DNS/TLS and keep events pending. |
 
 ## 3. Pump Delivery
@@ -105,7 +105,7 @@ Events are written atomically (temp file then rename) and evicted oldest-first w
 
 ## 5. Crash Breadcrumbs (Optional)
 
-`honch_install_error_handlers(queue_directory)` installs async-signal-safe handlers for `SIGABRT`, `SIGSEGV`, `SIGBUS`, `SIGILL`, and `SIGFPE`. They write a bounded breadcrumb file; the next `honch_init()` imports it as an `$error` event. The path is process-global, so use it with a single client.
+`honch_install_error_handlers(queue_directory)` installs async-signal-safe handlers for `SIGABRT`, `SIGSEGV`, `SIGBUS`, `SIGILL`, and `SIGFPE`. They write a bounded breadcrumb file to the directory; the next `honch_init()` imports it as a `$crash` event. The path is process-global, so use it with a single client. Because the breadcrumb is persisted to disk, a fatal crash is delivered on the next run even though the in-memory queue does not survive it. POSIX captures the signal/reset context, not a coredump — there is no symbolicated backtrace on this port. For handled, non-fatal errors call `honch_core_report_log_error(client, component, message)`.
 
 ## Transport Contract
 
@@ -131,8 +131,8 @@ The repository ships runnable examples under `ports/posix/example/`: `posix_devi
 | `honch_identify(client, distinct_id, traits, count)` | Set identity; emits `$identify`. |
 | `honch_set_property(client, key, value)` | Emit `$set_property`. |
 | `honch_session_start(client, name)` / `honch_session_end(client)` | Bracket a session. |
-| `honch_report_error(client, &report, props, count)` | Queue an `$error`. |
-| `honch_install_error_handlers(queue_directory)` | Install crash-breadcrumb signal handlers. |
+| `honch_core_report_log_error(client, component, message)` | Report a handled, non-fatal error as an `$error`. |
+| `honch_install_error_handlers(queue_directory)` | Install crash-breadcrumb signal handlers (`$crash` on next run). |
 | `honch_tick(client)` | Cooperative delivery step. |
 | `honch_flush(client)` | Send queued batches now. |
 | `honch_reset(client)` | Clear identity, session, and queue. |

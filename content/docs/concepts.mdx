@@ -72,9 +72,31 @@ The SDK emits these automatically. Be aware that simply initializing the SDK pro
 | `$device_shutdown` | Start of `shutdown()` | — |
 | `$identify` | `identify()` | `$anon_distinct_id` + your traits |
 | `$set_property` | `set_property()` | the single key/value you set |
-| `$error` | At init after an abnormal reset (when error tracking is enabled), and via `report_error()` | `source`, `severity`, and more |
+| `$crash` | At init after an abnormal reset, when error tracking is enabled | `reset_reason`, `severity`, `crash_id`, and — depending on platform — `backtrace`, `coredump_available` |
+| `$error` | A non-fatal error is captured: automatically from error logs (ESP-IDF) or via an explicit error-report call | `component`, `severity`, `message` |
 
 Note `$battery_low` is edge-triggered: it fires once when the battery drops below the threshold and will not fire again until the level recovers above it.
+
+## Crash And Error Reporting
+
+Honch reports both **fatal crashes** (a `$crash` event) and **non-fatal errors** (an `$error` event). Both are built on the shared core, so every port can report *that* a crash or error happened — but how much detail is captured, and how much is automatic, depends on the platform.
+
+| Platform | Fatal crash (`$crash`) | Crash detail captured | Non-fatal error (`$error`) |
+| --- | --- | --- | --- |
+| **ESP-IDF (ESP32)** | Automatic — abnormal reset detected at next boot (`enable_error_tracking`) | **Full coredump → symbolicated backtrace** (`enable_crash_symbolication`) | **Automatic** — `ESP_LOGE` lines become `$error` |
+| **MicroPython** | Uncaught Python exceptions — wrap your entry point with `client.run(main)`, or `install_error_hook()` where available | **Python traceback** (file/line/function) | Explicit — `report_log_error()` |
+| **C / POSIX** | Automatic via signal handlers (`honch_install_error_handlers()`) | Reset/signal context (no coredump) | Explicit — `honch_core_report_log_error()` |
+| **Arduino (ESP32)** | Automatic — abnormal reset detected at next boot (`enableErrorTracking`) | Reset reason (no coredump) | Explicit — core API |
+
+<Callout type="warn" title="Platform caveats — read before relying on these">
+
+- **Full coredumps are ESP-IDF only.** ESP32 captures the device's memory + registers at the moment of the crash, and the backend resolves it to a function/file/line **backtrace**. POSIX, MicroPython, and Arduino do **not** capture a coredump.
+- **The readable backtrace differs by platform.** ESP-IDF gets a symbolicated coredump backtrace; MicroPython gets the Python traceback; POSIX and Arduino get the `$crash` *event* (that it happened, plus reset/signal context) but no deep backtrace.
+- **Automatic error-log capture is ESP-IDF only.** On the other ports an `$error` is emitted only when your code calls the explicit error-report API (for example, wired into your logging) — nothing is captured automatically.
+- **MicroPython** captures crashes by wrapping your entry point with `client.run(main)` (works on every build) or via `install_error_hook()` (which needs `sys.excepthook` — stock firmware like the Pico W omits it, and the hook then returns `False`). Prefer `run()` unless your firmware enables the hook.
+- **Delivery timing differs by platform.** A `$crash` is queued, not sent synchronously. ESP-IDF and Arduino re-derive it from the hardware reset reason on the **next boot** (and the ESP-IDF coredump lives on a flash partition), so it survives the reset; POSIX persists the crash to its queue directory. **MicroPython reports in-process**, so a fatal crash is delivered only if a flush completes before the board resets — or you supply a durable queue. The default RAM queue does not survive a reset.
+
+</Callout>
 
 ## Queueing And Durability
 
@@ -88,7 +110,7 @@ The default queue is a **bounded, RAM-backed, drop-oldest** buffer you own (you 
 | `flush_interval_seconds` | 120 | Periodic flush cadence. |
 | `flush_event_threshold` | 20 | Queue depth that requests a flush. |
 | `flush_min_interval_ms` | 15000 | Minimum spacing between upload attempts. |
-| `transport_timeout_ms` | 2500 | Per-request timeout. |
+| `transport_timeout_ms` | 8000 | Per-request timeout. |
 | `flush_retry_initial_ms` | 1000 | First retry backoff. |
 | `flush_retry_max_ms` | 300000 | Backoff ceiling (5 minutes). |
 | `battery_low_threshold` | 15 | `$battery_low` trigger level. |

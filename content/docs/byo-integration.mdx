@@ -96,6 +96,7 @@ Honch recognizes a set of standard lifecycle events. Emitting them gives you dev
 | `$firmware_update` | Firmware or app version changed | `previous_version`, `new_version` |
 | `$battery_low` | Battery drops below your threshold | `level` (int) |
 | `$connectivity_change` | Network state changes | `state` (string) |
+| `$crash` | The device recovered from an abnormal reset/crash | `reset_reason`, `severity`, `crash_id` (+ `backtrace` if you have one) |
 | `$error` | An actionable recoverable error occurs | your own diagnostic properties |
 | `$device_reset` | Device returned to a factory state | — |
 | `$device_shutdown` | Device or app shuts down | — |

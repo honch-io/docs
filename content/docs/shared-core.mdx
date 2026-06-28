@@ -22,8 +22,11 @@ honch_status_t honch_core_identify(honch_client_t *, const char *distinct_id,
 honch_status_t honch_core_set_property(honch_client_t *, const char *key, honch_value_t value);
 honch_status_t honch_core_session_start(honch_client_t *, const char *session_name);
 honch_status_t honch_core_session_end(honch_client_t *);
-honch_status_t honch_core_report_error(honch_client_t *, const honch_error_report_t *,
-                                       const honch_property_t *properties, size_t property_count);
+/* Port-facing: a port reports a crash recovered from the previous boot ($crash),
+   or an error-level log line its error hook captured ($error). */
+honch_status_t honch_core_report_crash(honch_client_t *, const honch_crash_report_t *);
+honch_status_t honch_core_report_log_error(honch_client_t *, const char *component,
+                                           const char *message);
 honch_status_t honch_core_tick(honch_client_t *);
 honch_status_t honch_core_flush(honch_client_t *);
 honch_status_t honch_core_pause_uploads(honch_client_t *);
