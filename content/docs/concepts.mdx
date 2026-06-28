@@ -110,7 +110,7 @@ The default queue is a **bounded, RAM-backed, drop-oldest** buffer you own (you 
 | `flush_interval_seconds` | 120 | Periodic flush cadence. |
 | `flush_event_threshold` | 20 | Queue depth that requests a flush. |
 | `flush_min_interval_ms` | 15000 | Minimum spacing between upload attempts. |
-| `transport_timeout_ms` | 2500 | Per-request timeout. |
+| `transport_timeout_ms` | 8000 | Per-request timeout. |
 | `flush_retry_initial_ms` | 1000 | First retry backoff. |
 | `flush_retry_max_ms` | 300000 | Backoff ceiling (5 minutes). |
 | `battery_low_threshold` | 15 | `$battery_low` trigger level. |

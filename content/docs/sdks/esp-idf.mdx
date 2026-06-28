@@ -64,7 +64,7 @@ Required fields are `api_key`, `host`, `device_model`, `firmware_version`, and a
 | `flush_interval_seconds` | 120 | Periodic flush cadence. |
 | `flush_event_threshold` | 20 | Queue depth that requests a flush. |
 | `flush_min_interval_ms` | 15000 | Minimum spacing between upload attempts. |
-| `transport_timeout_ms` | 2500 | Clamped to 1000–10000 ms. |
+| `transport_timeout_ms` | 8000 | Clamped to 1000–10000 ms. A constrained ESP32 TLS handshake plus the POST needs headroom above the old 2.5 s. |
 | `flush_max_batches` | 1 | Batches sent per flush. |
 | `battery_callback` / `battery_low_threshold` | — / 15 | Return 0–100 to enable `$battery_level` and `$battery_low`. |
 | `connectivity_callback` | — | Return 0 when offline so the SDK skips DNS/TLS. Defaults to always-connected. |
