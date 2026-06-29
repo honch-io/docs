@@ -5,7 +5,7 @@ description: Product analytics for connected hardware — firmware, embedded Lin
 
 Honch is product analytics for connected hardware. Its SDKs run inside your firmware or app, capture events with typed properties, queue them locally, and upload them to Honch over HTTPS when the device is connected. One small C core defines the behavior; each platform port adapts storage, transport, timing, and packaging around it.
 
-Every SDK reports the same SDK version on the wire — `0.2.4` — because the four device ports share a single source of truth in the core. Maturity differs by platform, which is what the status column below reflects.
+Every SDK reports the same SDK version on the wire — `0.3.0` — because the four device ports share a single source of truth in the core. Maturity differs by platform, which is what the status column below reflects.
 
 ## Start Here
 
@@ -22,10 +22,10 @@ Resist adding every product event on day one. First prove that a single event qu
 
 | SDK | Status | Use it for |
 | --- | --- | --- |
-| [ESP-IDF](/sdks/esp-idf) | Stable · `0.2.4` | ESP32-family products built with Espressif's ESP-IDF framework. |
-| [C / POSIX](/sdks/c-posix) | Stable · `0.2.4` | Embedded Linux devices, gateways, and local development with file-backed queues you can inspect. |
-| [MicroPython](/sdks/micropython) | Stable · `0.2.4` | Firmware built with the `_honch_core` MicroPython user C module. |
-| [Arduino (ESP32)](/sdks/arduino) | Preview · `0.2.4` | ESP32 Arduino sketches. Evaluate and pilot before shipping. |
+| [ESP-IDF](/sdks/esp-idf) | Stable · `0.3.0` | ESP32-family products built with Espressif's ESP-IDF framework. |
+| [C / POSIX](/sdks/c-posix) | Stable · `0.3.0` | Embedded Linux devices, gateways, and local development with file-backed queues you can inspect. |
+| [MicroPython](/sdks/micropython) | Stable · `0.3.0` | Firmware built with the `_honch_core` MicroPython user C module. |
+| [Arduino (ESP32)](/sdks/arduino) | Preview · `0.3.0` | ESP32 Arduino sketches. Evaluate and pilot before shipping. |
 | [React Native Relay](/sdks/react-native-relay) | Preview · `0.1.0` | Companion apps that forward BLE frames from offline devices to Honch. |
 | [Swift Relay](/sdks/swift-relay) | Coming soon | iOS companion apps. Same relay model as React Native. |
 
