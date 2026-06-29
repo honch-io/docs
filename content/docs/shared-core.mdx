@@ -58,6 +58,23 @@ Limits: up to 64 properties per event, event names up to 128 bytes, `distinct_id
 
 `honch_status_t` runs from `HONCH_STATUS_OK` through `HONCH_STATUS_ERROR_OFFLINE` and covers invalid argument, not-initialized / already-initialized, no-memory, queue-full, I/O, transport, timeout, rate-limited, server, rejected, and offline conditions. Short aliases (`HONCH_OK`, `HONCH_ERROR_INVALID_ARGUMENT`, and so on) are provided. Use `honch_status_string()` for human-readable text. Ports map these onto their own return types (for example ESP-IDF's `honch_err_t`).
 
+## Error Context & Diagnostics
+
+The coarse `honch_status_t` answers *what kind* of error occurred, not *why*. For debugging, the core also records structured detail about the most recent failure in a `honch_error_detail_t`:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | The coarse `honch_status_t`. |
+| `reason` | A finer `honch_error_reason_t` — e.g. `HONCH_REASON_AUTH_INVALID_KEY`, `HONCH_REASON_DNS_FAILED`, `HONCH_REASON_TLS_CERT`, `HONCH_REASON_HTTP_STATUS`, `HONCH_REASON_QUEUE_FULL`. |
+| `http_status` | The HTTP status code, or `0` if none was received. |
+| `os_error` | The platform error (errno / CURLcode / esp_err_t), or `0`. |
+| `message` | A short static description, or `NULL`. |
+| `component` | The failing phase: `"http"`, `"queue"`, `"encode"`. |
+
+Read it with `honch_core_get_last_error(client, &detail)` (copied out under the state lock; safe to keep). Format a one-line summary with `honch_error_detail_format(&detail, buf, sizeof(buf))`, e.g. `rejected: HTTP 401 - API key invalid or revoked (reason=auth_invalid_key)`. A non-zero `os_error` is appended as ` os_error=<n>`. Reason tokens are available as stable strings via `honch_error_reason_string()`.
+
+On a failure the core also emits **one** deduped line through `platform->log` — `HONCH_LOG_WARN` for retryable failures, `HONCH_LOG_ERROR` for terminal ones — so the reason reaches the device's serial/log output without any extra code. The line is deduped per distinct failure (identical retries don't spam) and reset after a successful upload. This proactive logging is compiled in by default and can be stripped with `HONCH_ENABLE_ERROR_DIAGNOSTICS=0`; the struct, accessor, and formatter are always available. The fields and reason enum are additive — new reasons are appended, never renumbered.
+
 ## Configuration
 
 `honch_core_config_t` carries the tunables documented in [Shared Concepts](/concepts#queueing-and-durability) (`batch_size`, `max_queued_events`, `max_event_bytes`, the flush and retry timings, `battery_low_threshold`, `durability_mode`, `environment`, `endpoint_url`), plus the adapter tables and callbacks below. A field left zero takes the core default.

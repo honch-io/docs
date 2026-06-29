@@ -112,6 +112,22 @@ The library's registered examples are `HonchBasic` and `HonchOfflineQueue`. The 
 arduino-cli compile --fqbn esp32:esp32:esp32 examples/HonchBasic
 ```
 
+## Debugging Failures
+
+`lastError()` returns a short status word (`"transport error"`, `"rejected"`). For *why* a call failed, use the structured accessors:
+
+```cpp
+if (!Honch.flush()) {
+  honch_error_detail_t detail;
+  Honch.lastErrorDetail(&detail);
+  Serial.println(Honch.lastErrorMessage());
+  // "rejected: HTTP 401 - API key invalid or revoked (reason=auth_invalid_key)"
+  if (detail.http_status == 401) { /* bad project key */ }
+}
+```
+
+`lastErrorDetail(&out)` fills `status`, `reason`, `http_status`, `os_error`, `message`, and `component`; `lastErrorMessage()` returns the formatted one-liner. The SDK also logs that same line once per distinct failure via `log_w`/`log_e`, so failures show up on the serial monitor automatically. See [Error Context & Diagnostics](/shared-core#error-context--diagnostics).
+
 ## Public API
 
-`honch::defaultClient()` returns the singleton. Methods: `begin(config)`, `track(name, props, count)`, `identify(id, traits, count)`, `setProperty(key, value)`, `sessionStart(name)`, `sessionEnd()`, `flush()`, `tick()` (alias `loop()`), `reset()`, `shutdown()`, `deviceId()`, `queueStats(&stats)`, and `lastError()`.
+`honch::defaultClient()` returns the singleton. Methods: `begin(config)`, `track(name, props, count)`, `identify(id, traits, count)`, `setProperty(key, value)`, `sessionStart(name)`, `sessionEnd()`, `flush()`, `tick()` (alias `loop()`), `reset()`, `shutdown()`, `deviceId()`, `queueStats(&stats)`, `lastError()`, `lastErrorDetail(&detail)`, and `lastErrorMessage()`.
