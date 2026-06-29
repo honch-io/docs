@@ -133,7 +133,9 @@ if (honch_tick(client) != HONCH_OK &&
     char line[192];
     honch_error_detail_format(&detail, line, sizeof(line));
     fprintf(stderr, "honch: %s\n", line);
-    // "transport error: HTTP 503 (reason=http_status)"  /  "... reason=dns_failed"
+    // "transport error: HTTP 503 - server returned an error status (reason=http_status)"
+    // or, for a connect-phase failure (raw CURLcode in os_error):
+    // "transport error: DNS resolution failed - check the configured endpoint (reason=dns_failed) os_error=6"
 }
 ```
 

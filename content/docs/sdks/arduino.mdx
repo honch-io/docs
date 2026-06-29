@@ -121,7 +121,7 @@ if (!Honch.flush()) {
   honch_error_detail_t detail;
   Honch.lastErrorDetail(&detail);
   Serial.println(Honch.lastErrorMessage());
-  // "transport error: HTTP 401 - API key invalid or revoked (reason=auth_invalid_key)"
+  // "rejected: HTTP 401 - API key invalid or revoked (reason=auth_invalid_key)"
   if (detail.http_status == 401) { /* bad project key */ }
 }
 ```
