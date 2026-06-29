@@ -62,6 +62,20 @@ Required keyword arguments: `api_key`, `endpoint_url`, `device_id`, `device_mode
 
 Property values may be `None`, `bool`, `int`, `float`, `str`, `bytes`, `list`/`tuple`, or `dict` (with string keys), nested.
 
+<Callout type="warn" title="Sync the clock before tracking — the Pico W has no RTC">
+
+The Pico W (and most MicroPython boards) has no battery-backed real-time clock, so `time.time()` reads `2000-01-01` until you set it. Honch stamps every event with the **on-device time**, so if you `track()` before the clock is set, events upload and ingest fine but are stamped near **1970** and fall **outside the dashboard's time window** — they look "missing" when they are really just dated to the epoch. Sync NTP once after Wi-Fi is up and **before** you construct the client / track:
+
+```python
+import ntptime
+# ... after Wi-Fi is connected ...
+ntptime.settime()          # set the RTC from NTP (UTC)
+```
+
+See [Timestamps](/concepts#timestamps) for how the core treats an unset clock.
+
+</Callout>
+
 ## 4. Pump Delivery, Identity, And Connectivity
 
 There is no background thread. Call `client.tick()` on an interval from your main loop, and `client.flush()` to force a send.
@@ -73,6 +87,14 @@ while True:
 ```
 
 Connectivity is explicit. `client.connectivity_changed(connected)` (and the `connected()` / `disconnected()` shorthands) records the state and emits a `$connectivity_change` event with a `state` property of `"connected"` or `"disconnected"`. When the wrapper believes it is offline, `flush()` raises `OfflineError` and `tick()` is a no-op, so it never spends time on DNS/TLS.
+
+## Transport And TLS
+
+Uploads POST the compact chunk to `<endpoint_url>/capture`. On rp2 the port drives the entire exchange — connect, TLS handshake, request, and status read — on a non-blocking socket bounded by a single deadline. This matters because `urequests`' `timeout=` does **not** bound `connect()` or the TLS handshake on rp2: on a flaky or transitional link a plain upload would park the single-threaded VM indefinitely. With the bounded transport a stalled link raises promptly and the core retries on the next `tick()`/`flush()`; `transport_timeout_ms` (default 8000, max 10000) is the ceiling for the whole exchange.
+
+<Callout title="Certificate verification">
+The port **verifies the server certificate** against the Google Trust Services root R1 — the trust anchor for the default `i.honch.io` endpoint, the same root the ESP-IDF and Arduino ports pin. Verification checks the certificate's validity period, which needs a real clock, so the **NTP sync above is required for the handshake too** (not just for timestamps) — without it the connection is rejected. For a custom or local endpoint that isn't behind Google Trust Services, call `honch_transport.verify_tls(False)` before constructing the client. See [Security → Transport](/security#transport-is-tls-by-default).
+</Callout>
 
 ## 5. Crash And Error Reporting
 
