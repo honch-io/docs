@@ -122,11 +122,29 @@ Transport is libcurl with TLS verification enabled (peer and host); only `http`/
 
 The repository ships runnable examples under `ports/posix/example/`: `posix_device` (the snippet above), `connected_camera`, `posix_gpio` (edge-tracking from a host GPIO source), and `identify_merge`.
 
+## Debugging Failures
+
+When a call returns a non-`HONCH_OK` status, `honch_core_get_last_error()` gives the reason behind it:
+
+```c
+honch_error_detail_t detail;
+if (honch_tick(client) != HONCH_OK &&
+    honch_core_get_last_error(client, &detail) == HONCH_OK) {
+    char line[192];
+    honch_error_detail_format(&detail, line, sizeof(line));
+    fprintf(stderr, "honch: %s\n", line);
+    // "transport error: HTTP 503 (reason=http_status)"  /  "... reason=dns_failed"
+}
+```
+
+The libcurl transport fills `http_status` from the response and maps the `CURLcode` of a connect/DNS/TLS failure into `reason` (with the raw code in `os_error`). The core also emits the same one-line summary once per distinct failure through the platform `log` hook. See [Error Context & Diagnostics](/shared-core#error-context--diagnostics).
+
 ## Public API
 
 | Function | Purpose |
 | --- | --- |
 | `honch_init(&client, &config)` | Create and initialize a client. |
+| `honch_core_get_last_error(client, &detail)` | Structured detail (reason, http_status, os_error) for the last failure. |
 | `honch_track(client, event, props, count)` | Queue an event. |
 | `honch_identify(client, distinct_id, traits, count)` | Set identity; emits `$identify`. |
 | `honch_set_property(client, key, value)` | Emit `$set_property`. |

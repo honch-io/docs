@@ -192,11 +192,22 @@ idf.py build flash monitor
 
 Watch the serial log for `$device_boot` queuing at init, then a `POST /capture` from your tick task once Wi-Fi and time are up. A `204` means the batch was accepted; a `202` means a chunk was stored and more follow. See [Troubleshooting](/troubleshooting) if events queue but never upload.
 
+## Debugging Failures
+
+The `esp_http_client` transport records structured detail for every failed upload: the HTTP status maps to a `reason` (e.g. `401` → `auth_invalid_key`), and an `esp_err_t` connect/DNS/TLS failure maps into `reason` with the raw code in `os_error`. Read it with `honch_core_get_last_error(&detail)`. The core also emits one deduped line per distinct failure through the platform log hook under the `honch` tag — `ESP_LOGW` for retryable, `ESP_LOGE` for terminal — so `idf.py monitor` shows, for example:
+
+```text
+E (45231) honch: upload rejected: HTTP 401 - API key invalid or revoked (reason=auth_invalid_key)
+```
+
+Because the line is tagged `honch`, it is skipped by the `ESP_LOGE` → `$error` capture hook (no feedback loop). See [Error Context & Diagnostics](/shared-core#error-context--diagnostics).
+
 ## Public API
 
 | Function | Purpose |
 | --- | --- |
 | `honch_init(&config)` | Initialize the singleton; synchronous, no network. |
+| `honch_get_last_error(&detail)` | Structured detail (reason, http_status, os_error) for the last failure. |
 | `honch_track(event, props, count)` | Queue an event. |
 | `honch_identify(distinct_id, traits, count)` | Set identity; emits `$identify`. |
 | `honch_set_property(key, value)` | Emit `$set_property`. |

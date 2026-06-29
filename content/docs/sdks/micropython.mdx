@@ -138,12 +138,29 @@ Wrapper exceptions subclass `HonchError`: `InvalidArgumentError`, `StorageError`
 
 `ports/micropython/examples/` includes `basic.py` (above), a persistent-queue example, and a Pico W example.
 
+## Debugging Failures
+
+`Client.last_error()` returns a dict describing the most recent failure, so you can see *why* a flush failed rather than just that it did:
+
+```python
+try:
+    honch.flush()
+except HonchError:
+    err = honch.last_error()
+    print(err)
+    # {'status': 'rejected', 'reason': 'auth_invalid_key', 'http': 401,
+    #  'os_error': 0, 'message': 'API key invalid or revoked', 'component': 'http'}
+```
+
+`status` is `'ok'` and `reason` is `'none'` when nothing has failed yet. The SDK also logs the same one-line summary once per distinct failure through the platform log hook. See [Error Context & Diagnostics](/shared-core#error-context--diagnostics).
+
 ## Public API
 
 | Method | Purpose |
 | --- | --- |
 | `Honch(**config)` | Construct and initialize the client. |
 | `track(event, properties=None)` | Queue an event. |
+| `last_error()` | Dict of structured detail (reason, http, os_error, message) for the last failure. |
 | `identify(distinct_id, traits=None)` | Set identity; emits `$identify`. |
 | `set_property(key, value=None)` | Emit `$set_property`. |
 | `session_start(name=None)` / `session_end()` | Bracket a session. |
