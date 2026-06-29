@@ -7,14 +7,14 @@ This page covers what the SDKs do to keep data secure in transit and how to inte
 
 ## Transport Is TLS By Default
 
-Uploads are over TLS on every port. Certificate **verification** behavior differs by port — the table below is the source of truth:
+Every device SDK uploads over TLS **and verifies the server certificate** — there is no production path that disables verification. The per-port specifics:
 
 | Port | TLS behavior |
 | --- | --- |
 | ESP-IDF | Verifies the server certificate. For the default `i.honch.io` endpoint it trusts the Google Trust Services roots directly (certificate pinning to Honch's backend); for custom endpoints it uses the ESP-IDF certificate bundle, so your endpoint's chain must terminate at a root the bundle includes. There is no option to turn verification off. |
 | C / POSIX | libcurl with peer and host verification enabled; only `http`/`https` schemes, no redirect following. |
 | Arduino | `WiFiClientSecure`. For the default `i.honch.io` endpoint it pins the Google Trust Services roots, so it verifies with no setup. Set `rootCaPem` to trust your own CA (required for custom endpoints, and it overrides the default pin). `insecureSkipTlsVerify` exists for local testing only and logs a warning. |
-| MicroPython | Connects over TLS but does **not** currently verify the server certificate (no pinning). This is a known limitation of the MicroPython transport — partly because constrained boards like the Pico W have no real-time clock to validate certificate validity periods against. Prefer a trusted network path and avoid sending sensitive data over an untrusted one on this port until verification lands. |
+| MicroPython | Verifies the server certificate. For the default `i.honch.io` endpoint it pins the Google Trust Services root R1 (the same anchor as ESP-IDF and Arduino). Because validity-period checks need a real clock, you must sync NTP after connecting (also required for correct event timestamps) — otherwise the handshake is rejected. For a custom/local endpoint not behind Google Trust Services, call `honch_transport.verify_tls(False)` before constructing the client. |
 
 Always configure the endpoint with `https://` in production. Plain HTTP is only appropriate when you intentionally point an SDK at a local capture service during development.
 

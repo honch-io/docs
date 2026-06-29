@@ -92,8 +92,8 @@ Connectivity is explicit. `client.connectivity_changed(connected)` (and the `con
 
 Uploads POST the compact chunk to `<endpoint_url>/capture`. On rp2 the port drives the entire exchange — connect, TLS handshake, request, and status read — on a non-blocking socket bounded by a single deadline. This matters because `urequests`' `timeout=` does **not** bound `connect()` or the TLS handshake on rp2: on a flaky or transitional link a plain upload would park the single-threaded VM indefinitely. With the bounded transport a stalled link raises promptly and the core retries on the next `tick()`/`flush()`; `transport_timeout_ms` (default 8000, max 10000) is the ceiling for the whole exchange.
 
-<Callout type="warn" title="Certificate verification">
-The MicroPython port does **not** currently verify the server certificate, unlike the ESP-IDF and Arduino ports (which pin the Google Trust Services roots). Prefer a trusted network path and avoid sending sensitive data over an untrusted one until certificate verification lands. See [Security → Transport](/security#transport-is-tls-by-default).
+<Callout title="Certificate verification">
+The port **verifies the server certificate** against the Google Trust Services root R1 — the trust anchor for the default `i.honch.io` endpoint, the same root the ESP-IDF and Arduino ports pin. Verification checks the certificate's validity period, which needs a real clock, so the **NTP sync above is required for the handshake too** (not just for timestamps) — without it the connection is rejected. For a custom or local endpoint that isn't behind Google Trust Services, call `honch_transport.verify_tls(False)` before constructing the client. See [Security → Transport](/security#transport-is-tls-by-default).
 </Callout>
 
 ## 5. Crash And Error Reporting
