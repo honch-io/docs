@@ -1,0 +1,63 @@
+name: Sync SDK version
+
+# Keeps the version strings in the docs (status badges, port matrix, dependency
+# snippets) in step with the SDK. The SDK release pipeline fires a
+# `sdk-released` repository_dispatch with the new version; this opens a PR that
+# rewrites the docs to match. Can also be run by hand.
+on:
+  repository_dispatch:
+    types: [sdk-released]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SDK version to sync to (e.g. 0.3.0)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Resolve and validate version
+        # client_payload.* is attacker-controllable on repository_dispatch, so it
+        # is passed via env (never spliced into the script) and rejected unless it
+        # is strict semver before it is used anywhere downstream.
+        env:
+          PAYLOAD_VERSION: ${{ github.event.client_payload.version }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          version="${PAYLOAD_VERSION:-$INPUT_VERSION}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "::error::invalid or missing version: '$version'"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Rewrite docs version strings
+        run: node scripts/sync-sdk-version.mjs "$VERSION"
+
+      - name: Open PR if anything changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then
+            echo "docs already at $VERSION — nothing to do"; exit 0
+          fi
+          branch="sync/sdk-$VERSION"
+          git config user.name "honch-docs-bot"
+          git config user.email "docs@honch.io"
+          git checkout -b "$branch"
+          git commit -am "docs: sync SDK version to $VERSION"
+          git push -f origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "docs: sync SDK version to $VERSION" \
+            --body "Automated by the \`sdk-released\` dispatch from honch-io/SDK. Rewrites the advertised version (status badges, port matrix, \`honch/honch^\` + \`honch/Honch@^\` dependency snippets) to **$VERSION**. The relay packages keep their own versions." \
+            2>/dev/null || gh pr edit "$branch" --title "docs: sync SDK version to $VERSION"
