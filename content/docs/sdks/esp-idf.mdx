@@ -5,7 +5,7 @@ description: Install, configure, and verify Honch in ESP32 firmware built with E
 
 The ESP-IDF port is the production Honch SDK for ESP32-family chips. It is a thin wrapper over the shared core, registered as an ESP-IDF component and published to the Espressif Component Registry as `honch/honch`.
 
-<Callout title="Status">Stable · `0.3.0`. Requires ESP-IDF `>= 5.0` (verified against v6.0.1).</Callout>
+<Callout title="Status">Stable · `0.3.1`. Requires ESP-IDF `>= 5.0` (verified against v6.0.1).</Callout>
 
 ## Before You Start
 
@@ -18,7 +18,7 @@ The ESP-IDF port is the production Honch SDK for ESP32-family chips. It is a thi
 Add the dependency with the component manager:
 
 ```bash
-idf.py add-dependency "honch/honch^0.3.0"
+idf.py add-dependency "honch/honch^0.3.1"
 ```
 
 Or vendor the SDK as a git submodule (the component pulls in the shared `core/`, so submodule the whole repository):
